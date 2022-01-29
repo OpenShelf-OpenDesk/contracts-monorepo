@@ -9,18 +9,24 @@ import "./contracts-upgradeable/utils/ArraysUpgradeable.sol";
 import "./contracts-upgradeable/utils/math/SafeMathUpgradeable.sol";
 import "./contracts-upgradeable/utils/cryptography/draft-EIP712Upgradeable.sol";
 import "./contracts-upgradeable/utils/cryptography/ECDSAUpgradeable.sol";
-import "./contracts-upgradeable/utils/math/SafeMathUpgradeable.sol";
 
 /**
  * @title Book
  * @author Raghav Goyal, Nonit Mittal
  * @dev
  */
-contract Book is ReentrancyGuardUpgradeable, EIP712Upgradeable {
+contract Book is Initializable, ReentrancyGuardUpgradeable, EIP712Upgradeable {
     using CountersUpgradeable for CountersUpgradeable.Counter;
     using SafeMathUpgradeable for uint256;
 
     // Structs -----------------------------------------
+    struct Copy {
+        address owner;
+        address lockedWith;
+        bool onSale;
+        uint256 sellingPrice;
+    }
+
     struct BookVoucher {
         uint256 bookID;
         address receiver;
@@ -51,10 +57,9 @@ contract Book is ReentrancyGuardUpgradeable, EIP712Upgradeable {
     Contributor[] private _contributors;
 
     // Mappings ------------------------------------------
-    mapping(uint256 => address) private _pricedCopiesRecord; // copyUID --> previousOwner address
-    mapping(address => uint256[]) private _claimedOwnershipRecord; // address --> priced claimedCopyUIDs
-    mapping(address => uint256[]) private _unclaimedOwnershipRecord; // address --> priced unclaimedCopyUIDs
-    mapping(address => uint256) private _distributionRecord; // address --> free copyUIDs
+    mapping(uint256 => Copy) private _pricedCopiesRecord; // copyUID --> Copy
+    mapping(uint256 => address) private _distributionRecord; // free copyUIDs --> address
+    mapping(address => int96) private flowBalances;
 
     // Constants -----------------------------------------
     string private constant SIGNING_DOMAIN = "BOOK-VOUCHER";
@@ -94,9 +99,8 @@ contract Book is ReentrancyGuardUpgradeable, EIP712Upgradeable {
         // Minting FreeBooks to all Contributors
         for (uint256 i = 0; i < contributors.length; i++) {
             _contributors.push(contributors[i]);
-            _distributionRecord[
-                contributors[i].contributorAddress
-            ] = _freeBookUid.current();
+            _distributionRecord[_freeBookUid.current()] = contributors[i]
+                .contributorAddress;
             _freeBookUid.increment();
         }
         // TODO: emit event
@@ -105,6 +109,20 @@ contract Book is ReentrancyGuardUpgradeable, EIP712Upgradeable {
     // Private Functions ---------------------------------
     function _onlyPublusher(address msgSender) private view {
         require(msgSender == _publisher, "Un-authorized Request");
+    }
+
+    function _onlyOwner(address msgSender, uint256 copyUid) private view {
+        require(
+            _pricedCopiesRecord[copyUid].owner == msgSender,
+            "Un-authorized Request"
+        );
+    }
+
+    function _bookUnlocked(uint256 copyUid) private view {
+        require(
+            _pricedCopiesRecord[copyUid].lockedWith == address(0),
+            "Book Locked"
+        );
     }
 
     //  verify(BookVoucher)
@@ -117,124 +135,98 @@ contract Book is ReentrancyGuardUpgradeable, EIP712Upgradeable {
         return ECDSAUpgradeable.recover(digest, voucher.signature);
     }
 
-    function _internalTransfer(
-        uint256 copyUid,
-        uint256[] storage fromArray,
-        uint256[] storage toArray
-    ) private {
-        uint256 index;
-        // getting index of copyUid in msg.sender ownership record
-        index = ArraysUpgradeable.findUpperBound(fromArray, copyUid);
-        // reverting if copyUid not found
-        require(
-            index != 0 || index != fromArray.length,
-            "Invalid Transfer Request"
-        );
-        // removing copyUid from msg.sender ownership record
-        for (uint256 i = index; i < fromArray.length - 1; i++) {
-            fromArray[i] = _claimedOwnershipRecord[msg.sender][i + 1];
-        }
-        delete fromArray[fromArray.length - 1];
-        // adding copyUid in to's ownership record in assending order
-        index = ArraysUpgradeable.findUpperBound(toArray, copyUid);
-        toArray.push(copyUid);
-        for (uint256 j = index; j < toArray.length; j++) {
-            uint256 temp = toArray[j];
-            toArray[j] = copyUid;
-            copyUid = temp;
-        }
-        // TODO: emit event
-    }
-
     function _addRevenue(uint256 incrementBy) private {
         _totalRevenue = _totalRevenue.add(incrementBy);
         _withdrawableRevenue = _withdrawableRevenue.add(incrementBy);
-    }
-
-    // External Functions --------------------------------
-    //  buy
-    function buy(uint256 copies) external payable nonReentrant {
-        require(msg.value >= _price.mul(copies), "Insufficient Funds");
-        if (_supplyLimited) {
-            require(
-                _pricedBookSupplyLimit >
-                    _pricedBookUid.current().sub(1).add(copies),
-                "Supply Limit Reached"
-            );
-        }
-        for (uint256 i = 0; i < copies; i++) {
-            _pricedCopiesRecord[_pricedBookUid.current()] = _publisher;
-            _claimedOwnershipRecord[msg.sender].push(_pricedBookUid.current());
-            _pricedBookUid.increment();
-        }
-        _addRevenue(_price.mul(copies));
-        payable(msg.sender).transfer(msg.value.sub(_price.mul(copies)));
         // TODO: emit event
     }
 
-    //  transfer
-    function transferClaimedAsClaimed(uint256 copyUid, address to)
+    // External Functions --------------------------------
+    //  buyFromAuthor
+    function buy() external payable nonReentrant {
+        require(msg.value >= _price, "Insufficient Funds");
+        if (_supplyLimited) {
+            require(
+                _pricedBookSupplyLimit > _pricedBookUid.current().sub(1),
+                "Supply Limit Reached"
+            );
+        }
+        Copy memory newCopy = Copy(msg.sender, address(0), false, _price);
+        _pricedCopiesRecord[_pricedBookUid.current()] = newCopy;
+        _pricedBookUid.increment();
+        _addRevenue(_price);
+        payable(msg.sender).transfer(msg.value.sub(_price));
+        // TODO: emit event
+    }
+
+    //  buyFromPeer
+    function buyFromPeer(uint256 copyUid) external payable nonReentrant {
+        require(copyUid < _pricedBookUid.current(), "Invalid CopyUID");
+        require(
+            msg.value >= _pricedCopiesRecord[copyUid].sellingPrice,
+            "Insufficient Funds"
+        );
+        require(
+            _pricedCopiesRecord[copyUid].lockedWith == address(0),
+            "Book Locked"
+        );
+        address previousOwner = _pricedCopiesRecord[copyUid].owner;
+        _pricedCopiesRecord[copyUid].owner = msg.sender;
+        _pricedCopiesRecord[copyUid].onSale = false;
+        _addRevenue(_royalty);
+        payable(previousOwner).transfer(
+            _pricedCopiesRecord[copyUid].sellingPrice.sub(_royalty)
+        );
+        payable(msg.sender).transfer(
+            msg.value.sub(_pricedCopiesRecord[copyUid].sellingPrice)
+        );
+        // TODO: emit event
+    }
+
+    function transfer(address to, uint256 copyUid)
         external
         payable
         nonReentrant
     {
+        _onlyOwner(msg.sender, copyUid);
+        _bookUnlocked(copyUid);
         require(msg.value >= _royalty, "Insufficient Funds");
-        _internalTransfer(
-            copyUid,
-            _claimedOwnershipRecord[msg.sender],
-            _claimedOwnershipRecord[to]
-        );
+        _pricedCopiesRecord[copyUid].owner = to;
+        _pricedCopiesRecord[copyUid].onSale = false;
         _addRevenue(_royalty);
         payable(msg.sender).transfer(msg.value.sub(_royalty));
+        // TODO: emit event
     }
 
-    function transferUnclaimedAsClaimed(uint256 copyUid, address to)
-        external
-        payable
-        nonReentrant
-    {
-        require(msg.value >= _royalty, "Insufficient Funds");
-        _internalTransfer(
-            copyUid,
-            _unclaimedOwnershipRecord[msg.sender],
-            _claimedOwnershipRecord[to]
-        );
-        _addRevenue(_royalty);
-        payable(msg.sender).transfer(msg.value.sub(_royalty));
-    }
-
-    function transferClaimedAsUnclaimed(uint256 copyUid, address to)
-        external
-        nonReentrant
-    {
-        _internalTransfer(
-            copyUid,
-            _claimedOwnershipRecord[msg.sender],
-            _unclaimedOwnershipRecord[to]
-        );
-    }
-
-    function transferUnclaimedAsUnclaimed(uint256 copyUid, address to)
-        external
-        nonReentrant
-    {
-        _internalTransfer(
-            copyUid,
-            _unclaimedOwnershipRecord[msg.sender],
-            _unclaimedOwnershipRecord[to]
-        );
-    }
-
-    // Seller > Exchange (transferUnclaimed)
-    // Exchange > Buyer (transferUnclaimed)
-    // Buyer > Book (claimOwnership) - cutRoyalty
-    // transfer - cutRoyalty
-
-    //  updatePrice - onlyPushlisher
     // function updatePrice(uint256 newPrice, bytes32 metadataUri)
     function updatePrice(uint256 newPrice) external nonReentrant {
         _onlyPublusher(msg.sender);
         _price = newPrice;
+        // TODO: emit event
+    }
+
+    function updateSellingPrice(uint256 copyUid, uint256 newSellingPrice)
+        external
+        nonReentrant
+    {
+        _onlyOwner(msg.sender, copyUid);
+        _bookUnlocked(copyUid);
+        require(newSellingPrice >= _royalty, "Selling Price Less Than Royalty");
+        _pricedCopiesRecord[copyUid].sellingPrice = newSellingPrice;
+        // TODO: emit event
+    }
+
+    function putOnSale(uint256 copyUid) external nonReentrant {
+        _onlyOwner(msg.sender, copyUid);
+        _bookUnlocked(copyUid);
+        if (!_pricedCopiesRecord[copyUid].onSale)
+            _pricedCopiesRecord[copyUid].onSale = true;
+    }
+
+    function removeFromSale(uint256 copyUid) external nonReentrant {
+        _onlyOwner(msg.sender, copyUid);
+        if (_pricedCopiesRecord[copyUid].onSale)
+            _pricedCopiesRecord[copyUid].onSale = false;
         // TODO: emit event
     }
 
@@ -281,9 +273,13 @@ contract Book is ReentrancyGuardUpgradeable, EIP712Upgradeable {
 
     //  uri - onlyOwner
     function uri(uint256 copyUid) external view returns (bytes32) {
-        // getting index of copyUid in msg.sender ownership record
-        (bool verified, ) = this.verifyOwnership(msg.sender, copyUid, true);
-        require(verified, "Permission Denied");
+        require(
+            (_pricedCopiesRecord[copyUid].lockedWith == address(0) &&
+                _pricedCopiesRecord[copyUid].owner == msg.sender) ||
+                _pricedCopiesRecord[copyUid].lockedWith == msg.sender ||
+                _distributionRecord[copyUid] == msg.sender,
+            "Un-authorized Request"
+        );
         return _uri;
     }
 
@@ -320,7 +316,7 @@ contract Book is ReentrancyGuardUpgradeable, EIP712Upgradeable {
         address signer = _verify(voucher);
         require(_publisher == signer, "Invalid Signature");
         require(voucher.receiver == msg.sender, "Invalid Request");
-        _distributionRecord[voucher.receiver] = _freeBookUid.current();
+        _distributionRecord[_freeBookUid.current()] = voucher.receiver;
         _freeBookUid.increment();
         _addRevenue(voucher.price);
         payable(msg.sender).transfer(msg.value.sub(voucher.price));
@@ -369,10 +365,6 @@ contract Book is ReentrancyGuardUpgradeable, EIP712Upgradeable {
         // TODO: emit event
     }
 
-    function getPreviousOwner(uint256 copyUid) external view returns (address) {
-        return _pricedCopiesRecord[copyUid];
-    }
-
     function withdrawRevenue() external payable nonReentrant {
         _onlyPublusher(msg.sender);
         uint256 totalShares;
@@ -386,28 +378,43 @@ contract Book is ReentrancyGuardUpgradeable, EIP712Upgradeable {
                 revenuePerUnitShare.mul(_contributors[i].share)
             );
         }
+        // TODO: emit event
     }
 
     function verifyOwnership(
         address owner,
         uint256 copyUid,
-        bool claimed
-    ) external view returns (bool, uint256) {
-        uint256[] storage ownershipRecord;
-        if (claimed) {
-            ownershipRecord = _claimedOwnershipRecord[owner];
+        bool distributed
+    ) external view returns (bool) {
+        if (distributed) {
+            return _distributionRecord[copyUid] == owner;
         } else {
-            ownershipRecord = _unclaimedOwnershipRecord[owner];
+            return _pricedCopiesRecord[copyUid].owner == owner;
         }
-        uint256 index;
-        // getting index of copyUid in msg.sender ownership record
-        index = ArraysUpgradeable.findUpperBound(ownershipRecord, copyUid);
-        // reverting if copyUid not found
-        if (index != 0 || index != ownershipRecord.length) {
-            return (true, index);
-        } else {
-            return (false, index);
-        }
+    }
+
+    function lockWith(address to, uint256 copyUid) external nonReentrant {
+        _onlyOwner(msg.sender, copyUid);
+        _bookUnlocked(copyUid);
+        _pricedCopiesRecord[copyUid].lockedWith = to;
+        // TODO: emit event
+    }
+
+    function unlock(uint256 copyUid) external nonReentrant {
+        require(
+            _pricedCopiesRecord[copyUid].lockedWith == msg.sender,
+            "Un-authorized Request"
+        );
+        _pricedCopiesRecord[copyUid].lockedWith = address(0);
+        // TODO: emit event
+    }
+
+    function verifyLockedWith(address to, uint256 copyUid)
+        external
+        nonReentrant
+        returns (bool)
+    {
+        return _pricedCopiesRecord[copyUid].lockedWith == to;
     }
 
     // The Graph -----------------------------------------
