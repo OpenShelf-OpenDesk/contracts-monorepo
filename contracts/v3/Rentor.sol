@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.4;
 
-import "./contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
 import "./contracts-upgradeable/utils/ArraysUpgradeable.sol";
 import "./contracts-upgradeable/utils/math/SignedSafeMath.sol";
 import {ISuperfluid, ISuperToken, ISuperApp, ISuperAgreement, SuperAppDefinitions} from "@superfluid-finance/ethereum-contracts/contracts/interfaces/superfluid/ISuperfluid.sol";
 import {IConstantFlowAgreementV1} from "@superfluid-finance/ethereum-contracts/contracts/interfaces/agreements/IConstantFlowAgreementV1.sol";
 import {SuperAppBase} from "@superfluid-finance/ethereum-contracts/contracts/apps/SuperAppBase.sol";
-
+import "./contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "./contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "./Book.sol";
 
 /**
@@ -16,7 +16,7 @@ import "./Book.sol";
  * @author Raghav Goyal, Nonit Mittal
  * @dev
  */
-contract Rentor is Initializable, ReentrancyGuardUpgradeable, SuperAppBase {
+contract Rentor is ReentrancyGuardUpgradeable, SuperAppBase {
     using SignedSafeMath for int96;
 
     // Structs -----------------------------------------
@@ -31,7 +31,7 @@ contract Rentor is Initializable, ReentrancyGuardUpgradeable, SuperAppBase {
         uint256 copyUid;
     }
 
-    // Mappings --------------------------------------------
+    // Mappings ------------------------------------------
     // - flowBalance {address --> int96 flowRate}
     mapping(address => int96) private _flowBalances;
     // -_rentedBooksRecord {bookAddress --> {copyUid --> Pair{rentee, rentor, flowrate}}}
@@ -45,11 +45,11 @@ contract Rentor is Initializable, ReentrancyGuardUpgradeable, SuperAppBase {
     IConstantFlowAgreementV1 private _cfa;
     ISuperToken private _acceptedToken;
 
-    function initialize(
+    constructor(
         ISuperfluid host,
         IConstantFlowAgreementV1 cfa,
         ISuperToken acceptedToken
-    ) public initializer {
+    ) {
         __ReentrancyGuard_init();
         require(address(host) != address(0), "Zero Address Not Allowed");
         require(address(cfa) != address(0), "Zero Address Not Allowed");
@@ -68,7 +68,16 @@ contract Rentor is Initializable, ReentrancyGuardUpgradeable, SuperAppBase {
         _host.registerApp(configWord);
     }
 
-    // modifier -----------------------------------------
+    // Events -----------------------------------------
+    event AllBooksReturned();
+    event BookPutOnRent();
+    event BookRemovedFromRent();
+    event BookTakenOnRent();
+    event BookReturned();
+    event AddedToWaitingList(address bookAddress, uint256 copyUid);
+    event RemovedFromWaitingList(address bookAddress, uint256 copyUid);
+
+    // Modifiers -----------------------------------------
     modifier onlyHost() {
         require(msg.sender == address(_host), "Support Only One Host");
         _;
@@ -173,6 +182,7 @@ contract Rentor is Initializable, ReentrancyGuardUpgradeable, SuperAppBase {
         }
         delete _renteeRecord[rentee];
         // TODO: emit event
+        emit AllBooksReturned();
     }
 
     // External Functions ------------------------------------------------
@@ -199,6 +209,7 @@ contract Rentor is Initializable, ReentrancyGuardUpgradeable, SuperAppBase {
         _rentedBooksRecord[bookAddress][copyUid].rentor = msg.sender;
         _rentedBooksRecord[bookAddress][copyUid].flowRate = flowRate;
         // TODO: emit event
+        emit BookPutOnRent();
     }
 
     // removeFromRent
@@ -216,7 +227,10 @@ contract Rentor is Initializable, ReentrancyGuardUpgradeable, SuperAppBase {
             "Permission Denied"
         );
         delete _rentedBooksRecord[bookAddress][copyUid];
+        Book book = Book(bookAddress);
+        book.unlock(copyUid);
         // TODO: emit event
+        emit BookRemovedFromRent();
     }
 
     // takeOnRent
@@ -237,6 +251,7 @@ contract Rentor is Initializable, ReentrancyGuardUpgradeable, SuperAppBase {
         _updateFlowFromContract(msg.sender, record.flowRate.mul(-1));
         _updateFlowFromContract(record.rentor, record.flowRate);
         // TODO: emit event
+        emit BookTakenOnRent();
     }
 
     // returnOnRent
@@ -271,6 +286,7 @@ contract Rentor is Initializable, ReentrancyGuardUpgradeable, SuperAppBase {
         }
         _updateFlowFromContract(msg.sender, record.flowRate);
         // TODO: emit event
+        emit BookReturned();
     }
 
     // requestBookUri
@@ -288,22 +304,28 @@ contract Rentor is Initializable, ReentrancyGuardUpgradeable, SuperAppBase {
     }
 
     // addToWaitingList
-    // function addToWaitingList(address bookAddress, uint256 copyUid)
-    //     external
-    //     nonReentrant
-    // {
-    //     _flowExists(msg.sender);
-    //     // TODO: emit event
-    // }
+    function addToWaitingList(address bookAddress, uint256 copyUid)
+        external
+        nonReentrant
+    {
+        _flowExists(msg.sender);
+        // TODO: emit event
+        emit AddedToWaitingList(bookAddress, copyUid);
+    }
 
     // removeFromWaitingList
-    // function removeFromWaitingList(address bookAddress, uint256 copyUid)
-    //     external
-    //     nonReentrant
-    // {
-    //     _flowExists(msg.sender);
-    //     // TODO: emit event
-    // }
+    function removeFromWaitingList(address bookAddress, uint256 copyUid)
+        external
+        nonReentrant
+    {
+        _flowExists(msg.sender);
+        // TODO: emit event
+        emit RemovedFromWaitingList(bookAddress, copyUid);
+    }
+
+    // function _authorizeUpgrade(
+    //     address /*newImplementation*/
+    // ) internal view override onlyOwner {}
 
     // Super Agreement Callbacks -----------------------------------------
     function afterAgreementCreated(

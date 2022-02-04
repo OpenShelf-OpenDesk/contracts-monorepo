@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.4;
 
-import "./contracts-upgradeable/utils/math/SafeMathUpgradeable.sol";
+import "./contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "./contracts-upgradeable/proxy/utils/Initializable.sol";
+import "./contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "./contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
+import "./contracts-upgradeable/utils/math/SafeMathUpgradeable.sol";
 import "./Book.sol";
 
 /**
@@ -11,82 +13,93 @@ import "./Book.sol";
  * @author Raghav Goyal, Nonit Mittal
  * @dev
  */
-contract Exchange is Initializable, ReentrancyGuardUpgradeable {
+contract Exchange is
+    Initializable,
+    ReentrancyGuardUpgradeable,
+    UUPSUpgradeable,
+    OwnableUpgradeable
+{
     using SafeMathUpgradeable for uint256;
 
     // Mappings --------------------------------------------
-    //   - sellerOrders - {bookAddress --> {price --> [Seller(copyUid)]}}
-    mapping(address => mapping(uint256 => uint256[])) sellOrders;
-    //   - buyerOrders - {bookAddress --> {price --> [Buyer(address)]}}
-    mapping(address => mapping(uint256 => address[])) buyOrders;
+    // - offers - {bookAddress --> {copyUid --> {buyerAddress --> OfferPrice}}}
+    mapping(address => mapping(uint256 => mapping(address => uint256))) _offers;
+
+    // Events -----------------------------------------
+    event OfferMade();
+    event OfferCancelled();
+    event OfferAccepted();
 
     // Initializer -----------------------------------------
     function initialize() public initializer {
         __ReentrancyGuard_init();
+        __UUPSUpgradeable_init();
+        __Ownable_init();
     }
 
     // External Function -----------------------------------
-    function placeBuyOrder(address bookAddress, uint256 buyPrice)
+    // makeOffer
+    function makeOffer(
+        address bookAddress,
+        uint256 copyUid,
+        uint256 offerPrice
+    ) external payable nonReentrant {
+        require(msg.value >= offerPrice, "Insufficient Funds");
+        require(
+            !Book(bookAddress).verifyOwnership(msg.sender, copyUid, false),
+            "Invalid Request"
+        );
+        require(
+            offerPrice > _offers[bookAddress][copyUid][msg.sender],
+            "Invalid Offer"
+        );
+        _offers[bookAddress][copyUid][msg.sender] = offerPrice;
+        payable(msg.sender).transfer(msg.value.sub(offerPrice));
+        // TODO: emit event
+        emit OfferMade();
+    }
+
+    // cancelOffer
+    function cancelOffer(address bookAddress, uint256 copyUid)
         external
         payable
         nonReentrant
     {
-        Book book = Book(bookAddress);
-        uint256 royalty = book._royalty();
-        require(msg.value >= buyPrice.add(royalty), "Insufficient Funds");
-        if (sellOrders[bookAddress][buyPrice].length > 0) {
-            uint256 copyUid = sellOrders[bookAddress][buyPrice][0];
-            book.transferUnclaimedAsClaimed{value: royalty}(
-                copyUid,
-                msg.sender
-            );
-            address seller = book.getPreviousOwner(copyUid);
-            for (
-                uint256 i = 0;
-                i < sellOrders[bookAddress][buyPrice].length - 1;
-                i++
-            ) {
-                sellOrders[bookAddress][buyPrice][i] = sellOrders[bookAddress][
-                    buyPrice
-                ][i + 1];
-            }
-            delete sellOrders[bookAddress][buyPrice][
-                sellOrders[bookAddress][buyPrice].length - 1
-            ];
-            payable(seller).transfer(buyPrice);
-        } else {
-            buyOrders[bookAddress][buyPrice].push(msg.sender);
+        require(
+            !Book(bookAddress).verifyOwnership(msg.sender, copyUid, false),
+            "Invalid Request"
+        );
+        uint256 offeredPrice = _offers[bookAddress][copyUid][msg.sender];
+        if (offeredPrice > 0) {
+            delete _offers[bookAddress][copyUid][msg.sender];
+            payable(msg.sender).transfer(offeredPrice);
         }
-        payable(msg.sender).transfer(msg.value.sub(buyPrice.add(royalty)));
+        // TODO: emit event
+        emit OfferCancelled();
     }
 
-    function placeSellOrder(
+    // offerAccepted
+    function offerAccepted(
         address bookAddress,
         uint256 copyUid,
-        uint256 sellPrice
+        address buyer
     ) external payable nonReentrant {
         Book book = Book(bookAddress);
-        uint256 royalty = book._royalty();
-        (bool verified, ) = book.verifyOwnership(address(this), copyUid, false);
-        require(verified, "Invalid Request");
-        if (buyOrders[bookAddress][sellPrice].length > 0) {
-            address buyer = buyOrders[bookAddress][sellPrice][0];
-            book.transferUnclaimedAsClaimed{value: royalty}(copyUid, buyer);
-            for (
-                uint256 i = 0;
-                i < buyOrders[bookAddress][sellPrice].length - 1;
-                i++
-            ) {
-                buyOrders[bookAddress][sellPrice][i] = buyOrders[bookAddress][
-                    sellPrice
-                ][i + 1];
-            }
-            delete buyOrders[bookAddress][sellPrice][
-                buyOrders[bookAddress][sellPrice].length - 1
-            ];
-            payable(msg.sender).transfer(sellPrice);
-        } else {
-            sellOrders[bookAddress][sellPrice].push(copyUid);
+        require(
+            book.getPreviousOwner(copyUid) == msg.sender,
+            "Un-authorized Request"
+        );
+        require(book.verifyOwnership(buyer, copyUid, false), "Invalid Request");
+        uint256 offeredPrice = _offers[bookAddress][copyUid][buyer];
+        if (offeredPrice > 0) {
+            delete _offers[bookAddress][copyUid][buyer];
+            payable(msg.sender).transfer(offeredPrice);
         }
+        // TODO: emit event
+        emit OfferAccepted();
     }
+
+    function _authorizeUpgrade(
+        address /*newImplementation*/
+    ) internal view override onlyOwner {}
 }

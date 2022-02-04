@@ -1,30 +1,41 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.4;
 
-import "./contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
 import "./contracts-upgradeable/proxy/utils/Initializable.sol";
+import "./contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "./contracts-upgradeable/utils/CountersUpgradeable.sol";
-import "./contracts-upgradeable/utils/StringsUpgradeable.sol";
-import "./contracts-upgradeable/utils/ArraysUpgradeable.sol";
 import "./contracts-upgradeable/utils/math/SafeMathUpgradeable.sol";
+import "./contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
+
 import "./contracts-upgradeable/utils/cryptography/draft-EIP712Upgradeable.sol";
-import "./contracts-upgradeable/utils/cryptography/ECDSAUpgradeable.sol";
+import "./contracts-upgradeable/utils/cryptography/LibSignature.sol";
 
 /**
  * @title Book
  * @author Raghav Goyal, Nonit Mittal
  * @dev
  */
-contract Book is Initializable, ReentrancyGuardUpgradeable, EIP712Upgradeable {
+contract Book is
+    Initializable,
+    UUPSUpgradeable,
+    EIP712Upgradeable,
+    ReentrancyGuardUpgradeable
+{
     using CountersUpgradeable for CountersUpgradeable.Counter;
     using SafeMathUpgradeable for uint256;
+    using LibSignature for bytes32;
 
     // Structs -----------------------------------------
     struct Copy {
         address owner;
+        address previousOwner;
         address lockedWith;
-        bool onSale;
         uint256 sellingPrice;
+    }
+
+    struct Contributor {
+        address contributorAddress;
+        uint96 share;
     }
 
     struct BookVoucher {
@@ -34,19 +45,14 @@ contract Book is Initializable, ReentrancyGuardUpgradeable, EIP712Upgradeable {
         bytes signature;
     }
 
-    struct Contributor {
-        address contributorAddress;
-        uint96 share;
-    }
-
     // Storage Variables -----------------------------------------
     CountersUpgradeable.Counter private _pricedBookUid;
     CountersUpgradeable.Counter private _freeBookUid;
-    uint256 private _bookId;
+    uint256 public _bookId;
     bytes32 private _uri;
     bytes32 private _coverPageUri;
     uint256 private _price;
-    uint256 public _royalty;
+    uint256 private _royalty;
     uint256 private _totalRevenue;
     uint256 private _withdrawableRevenue;
     uint256 private _pricedBookSupplyLimit;
@@ -59,7 +65,24 @@ contract Book is Initializable, ReentrancyGuardUpgradeable, EIP712Upgradeable {
     // Mappings ------------------------------------------
     mapping(uint256 => Copy) private _pricedCopiesRecord; // copyUID --> Copy
     mapping(uint256 => address) private _distributionRecord; // free copyUIDs --> address
-    mapping(address => int96) private flowBalances;
+
+    // Events -----------------------------------------
+    event BookBought();
+    event BookTransferred();
+    event PriceUpdated();
+    event SellingPriceUpdated();
+    event MarketSupplyIncreased();
+    event SupplyUnlimited();
+    event SupplyLimited();
+    event RoyaltyUpdated();
+    event BookRedeemed();
+    event CoverPageUpdated();
+    event ContributorAdded();
+    event ContributorRemoved();
+    event ContributorUpdated();
+    event RevenueWithdrawn();
+    event BookLocked();
+    event BookUnlocked();
 
     // Constants -----------------------------------------
     string private constant SIGNING_DOMAIN = "BOOK-VOUCHER";
@@ -72,22 +95,17 @@ contract Book is Initializable, ReentrancyGuardUpgradeable, EIP712Upgradeable {
         bytes32 coverPageUri,
         uint256 price,
         uint256 royalty,
-        uint256 totalRevenue,
-        uint256 withdrawableRevenue,
         uint256 pricedBookSupplyLimit,
-        bool supplyLimited,
-        Contributor[] calldata contributors
+        bool supplyLimited
     ) public initializer {
         __EIP712_init(SIGNING_DOMAIN, SIGNATURE_VERSION);
         __ReentrancyGuard_init();
-
+        __UUPSUpgradeable_init();
         _bookId = bookId;
         _uri = bookUri;
         _coverPageUri = coverPageUri;
         _price = price;
         _royalty = royalty;
-        _totalRevenue = totalRevenue;
-        _withdrawableRevenue = withdrawableRevenue;
         _pricedBookSupplyLimit = pricedBookSupplyLimit;
         _supplyLimited = supplyLimited;
         _publisher = msg.sender;
@@ -95,19 +113,10 @@ contract Book is Initializable, ReentrancyGuardUpgradeable, EIP712Upgradeable {
         // Counters incremented to 1
         _pricedBookUid.increment();
         _freeBookUid.increment();
-
-        // Minting FreeBooks to all Contributors
-        for (uint256 i = 0; i < contributors.length; i++) {
-            _contributors.push(contributors[i]);
-            _distributionRecord[_freeBookUid.current()] = contributors[i]
-                .contributorAddress;
-            _freeBookUid.increment();
-        }
-        // TODO: emit event
     }
 
     // Private Functions ---------------------------------
-    function _onlyPublusher(address msgSender) private view {
+    function _onlyPublisher(address msgSender) private view {
         require(msgSender == _publisher, "Un-authorized Request");
     }
 
@@ -123,16 +132,6 @@ contract Book is Initializable, ReentrancyGuardUpgradeable, EIP712Upgradeable {
             _pricedCopiesRecord[copyUid].lockedWith == address(0),
             "Book Locked"
         );
-    }
-
-    //  verify(BookVoucher)
-    function _verify(BookVoucher calldata voucher)
-        private
-        view
-        returns (address)
-    {
-        bytes32 digest = hash(voucher);
-        return ECDSAUpgradeable.recover(digest, voucher.signature);
     }
 
     function _addRevenue(uint256 incrementBy) private {
@@ -151,37 +150,39 @@ contract Book is Initializable, ReentrancyGuardUpgradeable, EIP712Upgradeable {
                 "Supply Limit Reached"
             );
         }
-        Copy memory newCopy = Copy(msg.sender, address(0), false, _price);
+        Copy memory newCopy = Copy(msg.sender, _publisher, address(0), _price);
         _pricedCopiesRecord[_pricedBookUid.current()] = newCopy;
         _pricedBookUid.increment();
         _addRevenue(_price);
         payable(msg.sender).transfer(msg.value.sub(_price));
         // TODO: emit event
+        emit BookBought();
     }
 
     //  buyFromPeer
-    function buyFromPeer(uint256 copyUid) external payable nonReentrant {
-        require(copyUid < _pricedBookUid.current(), "Invalid CopyUID");
-        require(
-            msg.value >= _pricedCopiesRecord[copyUid].sellingPrice,
-            "Insufficient Funds"
-        );
-        require(
-            _pricedCopiesRecord[copyUid].lockedWith == address(0),
-            "Book Locked"
-        );
-        address previousOwner = _pricedCopiesRecord[copyUid].owner;
-        _pricedCopiesRecord[copyUid].owner = msg.sender;
-        _pricedCopiesRecord[copyUid].onSale = false;
-        _addRevenue(_royalty);
-        payable(previousOwner).transfer(
-            _pricedCopiesRecord[copyUid].sellingPrice.sub(_royalty)
-        );
-        payable(msg.sender).transfer(
-            msg.value.sub(_pricedCopiesRecord[copyUid].sellingPrice)
-        );
-        // TODO: emit event
-    }
+    // function buyFromPeer(uint256 copyUid) external payable nonReentrant {
+    //     require(copyUid < _pricedBookUid.current(), "Invalid CopyUID");
+    //     require(
+    //         msg.value >= _pricedCopiesRecord[copyUid].sellingPrice,
+    //         "Insufficient Funds"
+    //     );
+    //     require(
+    //         _pricedCopiesRecord[copyUid].lockedWith == address(0),
+    //         "Book Locked"
+    //     );
+    //     address previousOwner = _pricedCopiesRecord[copyUid].owner;
+    //     _pricedCopiesRecord[copyUid].previousOwner = previousOwner;
+    //     _pricedCopiesRecord[copyUid].owner = msg.sender;
+    //     _pricedCopiesRecord[copyUid].onSale = false;
+    //     _addRevenue(_royalty);
+    //     payable(previousOwner).transfer(
+    //         _pricedCopiesRecord[copyUid].sellingPrice.sub(_royalty)
+    //     );
+    //     payable(msg.sender).transfer(
+    //         msg.value.sub(_pricedCopiesRecord[copyUid].sellingPrice)
+    //     );
+    //     // TODO: emit event
+    // }
 
     function transfer(address to, uint256 copyUid)
         external
@@ -191,18 +192,20 @@ contract Book is Initializable, ReentrancyGuardUpgradeable, EIP712Upgradeable {
         _onlyOwner(msg.sender, copyUid);
         _bookUnlocked(copyUid);
         require(msg.value >= _royalty, "Insufficient Funds");
+        _pricedCopiesRecord[copyUid].previousOwner = msg.sender;
         _pricedCopiesRecord[copyUid].owner = to;
-        _pricedCopiesRecord[copyUid].onSale = false;
         _addRevenue(_royalty);
         payable(msg.sender).transfer(msg.value.sub(_royalty));
         // TODO: emit event
+        emit BookTransferred();
     }
 
     // function updatePrice(uint256 newPrice, bytes32 metadataUri)
     function updatePrice(uint256 newPrice) external nonReentrant {
-        _onlyPublusher(msg.sender);
+        _onlyPublisher(msg.sender);
         _price = newPrice;
         // TODO: emit event
+        emit PriceUpdated();
     }
 
     function updateSellingPrice(uint256 copyUid, uint256 newSellingPrice)
@@ -214,21 +217,23 @@ contract Book is Initializable, ReentrancyGuardUpgradeable, EIP712Upgradeable {
         require(newSellingPrice >= _royalty, "Selling Price Less Than Royalty");
         _pricedCopiesRecord[copyUid].sellingPrice = newSellingPrice;
         // TODO: emit event
+        emit SellingPriceUpdated();
     }
 
-    function putOnSale(uint256 copyUid) external nonReentrant {
-        _onlyOwner(msg.sender, copyUid);
-        _bookUnlocked(copyUid);
-        if (!_pricedCopiesRecord[copyUid].onSale)
-            _pricedCopiesRecord[copyUid].onSale = true;
-    }
+    // function putOnSale(uint256 copyUid) external nonReentrant {
+    //     _onlyOwner(msg.sender, copyUid);
+    //     _bookUnlocked(copyUid);
+    //     if (!_pricedCopiesRecord[copyUid].onSale)
+    //         _pricedCopiesRecord[copyUid].onSale = true;
+    //     // TODO: emit event
+    // }
 
-    function removeFromSale(uint256 copyUid) external nonReentrant {
-        _onlyOwner(msg.sender, copyUid);
-        if (_pricedCopiesRecord[copyUid].onSale)
-            _pricedCopiesRecord[copyUid].onSale = false;
-        // TODO: emit event
-    }
+    // function removeFromSale(uint256 copyUid) external nonReentrant {
+    //     _onlyOwner(msg.sender, copyUid);
+    //     if (_pricedCopiesRecord[copyUid].onSale)
+    //         _pricedCopiesRecord[copyUid].onSale = false;
+    //     // TODO: emit event
+    // }
 
     //  increaseMarketSupply - onlyPublisher
     //                     - (unLimit, limit, increaseMarketSupply)
@@ -236,16 +241,18 @@ contract Book is Initializable, ReentrancyGuardUpgradeable, EIP712Upgradeable {
         external
         nonReentrant
     {
-        _onlyPublusher(msg.sender);
+        _onlyPublisher(msg.sender);
         require(_supplyLimited, "Supply Not Limited");
         _pricedBookSupplyLimit += incrementSupplyBy;
         // TODO: emit event
+        emit MarketSupplyIncreased();
     }
 
     function unlimitSupply() external nonReentrant {
         require(_supplyLimited, "Supply Already Unlimited");
         _supplyLimited = false;
         // TODO: emit event
+        emit SupplyUnlimited();
     }
 
     function limitSupply() external nonReentrant {
@@ -253,22 +260,25 @@ contract Book is Initializable, ReentrancyGuardUpgradeable, EIP712Upgradeable {
         _supplyLimited = true;
         _pricedBookSupplyLimit = _pricedBookUid.current() - 1;
         // TODO: emit event
+        emit SupplyLimited();
     }
 
     //  updateRoyalty - onlyPushlisher
     // function updateRoyalty(uint8 newRoyalty, bytes32 metadataUri)
     function updateRoyalty(uint8 newRoyalty) external nonReentrant {
-        _onlyPublusher(msg.sender);
+        _onlyPublisher(msg.sender);
         _royalty = newRoyalty;
         // TODO: emit event
+        emit RoyaltyUpdated();
     }
 
     //  updateCoverPageUri - onlyPushlisher
     // function updateCoverPageUri(bytes32 newCoverPageUri, bytes32 metadataUri)
     function updateCoverPageUri(bytes32 newCoverPageUri) external nonReentrant {
-        _onlyPublusher(msg.sender);
+        _onlyPublisher(msg.sender);
         _coverPageUri = newCoverPageUri;
         // TODO: emit event
+        emit CoverPageUpdated();
     }
 
     //  uri - onlyOwner
@@ -285,25 +295,8 @@ contract Book is Initializable, ReentrancyGuardUpgradeable, EIP712Upgradeable {
 
     //  getWithdrawableRevenue - onlyPushlisher
     function getWithdrawableRevenue() external view returns (uint256) {
-        _onlyPublusher(msg.sender);
+        _onlyPublisher(msg.sender);
         return _withdrawableRevenue;
-    }
-
-    //  hash(BookVoucher)
-    function hash(BookVoucher calldata voucher) public view returns (bytes32) {
-        return
-            _hashTypedDataV4(
-                keccak256(
-                    abi.encode(
-                        keccak256(
-                            "BookVoucher(uint256 bookID,uint256 price,address receiver)"
-                        ),
-                        voucher.bookID,
-                        voucher.price,
-                        voucher.receiver
-                    )
-                )
-            );
     }
 
     //  redeem(msg.sender, BookVoucher)
@@ -321,10 +314,7 @@ contract Book is Initializable, ReentrancyGuardUpgradeable, EIP712Upgradeable {
         _addRevenue(voucher.price);
         payable(msg.sender).transfer(msg.value.sub(voucher.price));
         //TODO: emit event
-    }
-
-    function getChainID() external view returns (uint256 id) {
-        id = block.chainid;
+        emit BookRedeemed();
     }
 
     //  addContributor - onlyPushlisher
@@ -332,14 +322,18 @@ contract Book is Initializable, ReentrancyGuardUpgradeable, EIP712Upgradeable {
         external
         nonReentrant
     {
-        _onlyPublusher(msg.sender);
+        _onlyPublisher(msg.sender);
         _contributors.push(newContributor);
+        _distributionRecord[_freeBookUid.current()] = newContributor
+            .contributorAddress;
+        _freeBookUid.increment();
         // TODO: emit event
+        emit ContributorAdded();
     }
 
     //  removeContributor - onlyPushlisher
     function removeConributor(address contributor) external nonReentrant {
-        _onlyPublusher(msg.sender);
+        _onlyPublisher(msg.sender);
         for (uint256 i = 0; i < _contributors.length; i++) {
             if (_contributors[i].contributorAddress == contributor) {
                 _contributors[i] = _contributors[_contributors.length - 1];
@@ -348,6 +342,7 @@ contract Book is Initializable, ReentrancyGuardUpgradeable, EIP712Upgradeable {
             }
         }
         // TODO: emit event
+        emit ContributorRemoved();
     }
 
     //  updateShares - onlyPushlisher
@@ -355,7 +350,7 @@ contract Book is Initializable, ReentrancyGuardUpgradeable, EIP712Upgradeable {
         external
         nonReentrant
     {
-        _onlyPublusher(msg.sender);
+        _onlyPublisher(msg.sender);
         for (uint256 i = 0; i < _contributors.length; i++) {
             if (_contributors[i].contributorAddress == contributor) {
                 _contributors[i].share = share;
@@ -363,10 +358,11 @@ contract Book is Initializable, ReentrancyGuardUpgradeable, EIP712Upgradeable {
             }
         }
         // TODO: emit event
+        emit ContributorUpdated();
     }
 
     function withdrawRevenue() external payable nonReentrant {
-        _onlyPublusher(msg.sender);
+        _onlyPublisher(msg.sender);
         uint256 totalShares;
         for (uint256 i = 0; i < _contributors.length; i++) {
             totalShares = totalShares.add(_contributors[i].share);
@@ -379,6 +375,7 @@ contract Book is Initializable, ReentrancyGuardUpgradeable, EIP712Upgradeable {
             );
         }
         // TODO: emit event
+        emit RevenueWithdrawn();
     }
 
     function verifyOwnership(
@@ -398,6 +395,7 @@ contract Book is Initializable, ReentrancyGuardUpgradeable, EIP712Upgradeable {
         _bookUnlocked(copyUid);
         _pricedCopiesRecord[copyUid].lockedWith = to;
         // TODO: emit event
+        emit BookLocked();
     }
 
     function unlock(uint256 copyUid) external nonReentrant {
@@ -407,20 +405,68 @@ contract Book is Initializable, ReentrancyGuardUpgradeable, EIP712Upgradeable {
         );
         _pricedCopiesRecord[copyUid].lockedWith = address(0);
         // TODO: emit event
+        emit BookUnlocked();
     }
 
     function verifyLockedWith(address to, uint256 copyUid)
         external
-        nonReentrant
+        view
         returns (bool)
     {
         return _pricedCopiesRecord[copyUid].lockedWith == to;
     }
 
+    function getPreviousOwner(uint256 copyUid) external view returns (address) {
+        return _pricedCopiesRecord[copyUid].previousOwner;
+    }
+
+    function _authorizeUpgrade(address newImplementation)
+        internal
+        view
+        override
+    {
+        _onlyPublisher(msg.sender);
+        require(
+            Book(newImplementation)._bookId() == _bookId,
+            "Invalid Implementation"
+        );
+    }
+
+    //  verify(BookVoucher)
+    function _verify(BookVoucher calldata voucher)
+        private
+        view
+        returns (address)
+    {
+        bytes32 digest = hash(voucher);
+        return LibSignature.recover(digest, voucher.signature);
+    }
+
+    //  hash(BookVoucher)
+    function hash(BookVoucher calldata voucher) public view returns (bytes32) {
+        return
+            _hashTypedDataV4(
+                keccak256(
+                    abi.encode(
+                        keccak256(
+                            "BookVoucher(uint256 bookID,uint256 price,address receiver)"
+                        ),
+                        voucher.bookID,
+                        voucher.price,
+                        voucher.receiver
+                    )
+                )
+            );
+    }
+
+    function getChainID() external view returns (uint256 id) {
+        id = block.chainid;
+    }
+
     // The Graph -----------------------------------------
     // - Book
     //      - publishedOn
-    //      - metadatUri
+    //      - metadataUri
     //      - prequel
     //      - edition
     //      - totalRevenue
