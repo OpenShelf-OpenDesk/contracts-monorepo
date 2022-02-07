@@ -67,22 +67,26 @@ contract Book is
     mapping(uint256 => address) private _distributionRecord; // free copyUIDs --> address
 
     // Events -----------------------------------------
-    event BookBought();
-    event BookTransferred();
-    event PriceUpdated();
-    event SellingPriceUpdated();
-    event MarketSupplyIncreased();
+    event BookBought(uint256 copyUid, address indexed buyer, uint256 price);
+    event BookTransferred(uint256 copyUid, address indexed to);
+    event PriceUpdated(uint256 newPrice);
+    event SellingPriceUpdated(uint256 copyUid, uint256 newSellingPrice);
+    event MarketSupplyIncreased(uint256 newPricedBookSupplyLimit);
     event SupplyUnlimited();
     event SupplyLimited();
-    event RoyaltyUpdated();
-    event BookRedeemed();
-    event CoverPageUpdated();
-    event ContributorAdded();
-    event ContributorRemoved();
-    event ContributorUpdated();
-    event RevenueWithdrawn();
-    event BookLocked();
-    event BookUnlocked();
+    event RoyaltyUpdated(uint256 newRoyalty);
+    event CoverPageUpdated(bytes32 newCoverPageUri);
+    event BookRedeemed(
+        uint256 distributedCopyUid,
+        uint256 price,
+        address indexed receiver
+    );
+    event ContributorAdded(address indexed contributorAddress, uint96 share);
+    event ContributorRemoved(address indexed contributorAddress);
+    event ContributorUpdated(address indexed contributorAddress, uint96 share);
+    event RevenueWithdrawn(uint256 withdrawableRevenue);
+    event BookLocked(uint256 copyUid, address indexed to);
+    event BookUnlocked(uint256 copyUid);
 
     // Constants -----------------------------------------
     string private constant SIGNING_DOMAIN = "BOOK-VOUCHER";
@@ -137,7 +141,6 @@ contract Book is
     function _addRevenue(uint256 incrementBy) private {
         _totalRevenue = _totalRevenue.add(incrementBy);
         _withdrawableRevenue = _withdrawableRevenue.add(incrementBy);
-        // TODO: emit event
     }
 
     // External Functions --------------------------------
@@ -155,11 +158,10 @@ contract Book is
         _pricedBookUid.increment();
         _addRevenue(_price);
         payable(msg.sender).transfer(msg.value.sub(_price));
-        // TODO: emit event
-        emit BookBought();
+        emit BookBought(_pricedBookUid.current(), msg.sender, _price);
     }
 
-    //  buyFromPeer
+    // buyFromPeer
     // function buyFromPeer(uint256 copyUid) external payable nonReentrant {
     //     require(copyUid < _pricedBookUid.current(), "Invalid CopyUID");
     //     require(
@@ -196,16 +198,14 @@ contract Book is
         _pricedCopiesRecord[copyUid].owner = to;
         _addRevenue(_royalty);
         payable(msg.sender).transfer(msg.value.sub(_royalty));
-        // TODO: emit event
-        emit BookTransferred();
+        emit BookTransferred(copyUid, to);
     }
 
     // function updatePrice(uint256 newPrice, bytes32 metadataUri)
     function updatePrice(uint256 newPrice) external nonReentrant {
         _onlyPublisher(msg.sender);
         _price = newPrice;
-        // TODO: emit event
-        emit PriceUpdated();
+        emit PriceUpdated(newPrice);
     }
 
     function updateSellingPrice(uint256 copyUid, uint256 newSellingPrice)
@@ -216,8 +216,7 @@ contract Book is
         _bookUnlocked(copyUid);
         require(newSellingPrice >= _royalty, "Selling Price Less Than Royalty");
         _pricedCopiesRecord[copyUid].sellingPrice = newSellingPrice;
-        // TODO: emit event
-        emit SellingPriceUpdated();
+        emit SellingPriceUpdated(copyUid, newSellingPrice);
     }
 
     // function putOnSale(uint256 copyUid) external nonReentrant {
@@ -244,14 +243,12 @@ contract Book is
         _onlyPublisher(msg.sender);
         require(_supplyLimited, "Supply Not Limited");
         _pricedBookSupplyLimit += incrementSupplyBy;
-        // TODO: emit event
-        emit MarketSupplyIncreased();
+        emit MarketSupplyIncreased(_pricedBookSupplyLimit);
     }
 
     function unlimitSupply() external nonReentrant {
         require(_supplyLimited, "Supply Already Unlimited");
         _supplyLimited = false;
-        // TODO: emit event
         emit SupplyUnlimited();
     }
 
@@ -259,17 +256,15 @@ contract Book is
         require(!_supplyLimited, "Supply Already Limited");
         _supplyLimited = true;
         _pricedBookSupplyLimit = _pricedBookUid.current() - 1;
-        // TODO: emit event
         emit SupplyLimited();
     }
 
     //  updateRoyalty - onlyPushlisher
     // function updateRoyalty(uint8 newRoyalty, bytes32 metadataUri)
-    function updateRoyalty(uint8 newRoyalty) external nonReentrant {
+    function updateRoyalty(uint256 newRoyalty) external nonReentrant {
         _onlyPublisher(msg.sender);
         _royalty = newRoyalty;
-        // TODO: emit event
-        emit RoyaltyUpdated();
+        emit RoyaltyUpdated(newRoyalty);
     }
 
     //  updateCoverPageUri - onlyPushlisher
@@ -277,8 +272,7 @@ contract Book is
     function updateCoverPageUri(bytes32 newCoverPageUri) external nonReentrant {
         _onlyPublisher(msg.sender);
         _coverPageUri = newCoverPageUri;
-        // TODO: emit event
-        emit CoverPageUpdated();
+        emit CoverPageUpdated(newCoverPageUri);
     }
 
     //  uri - onlyOwner
@@ -314,7 +308,11 @@ contract Book is
         _addRevenue(voucher.price);
         payable(msg.sender).transfer(msg.value.sub(voucher.price));
         //TODO: emit event
-        emit BookRedeemed();
+        emit BookRedeemed(
+            _freeBookUid.current(),
+            voucher.price,
+            voucher.receiver
+        );
     }
 
     //  addContributor - onlyPushlisher
@@ -327,8 +325,10 @@ contract Book is
         _distributionRecord[_freeBookUid.current()] = newContributor
             .contributorAddress;
         _freeBookUid.increment();
-        // TODO: emit event
-        emit ContributorAdded();
+        emit ContributorAdded(
+            newContributor.contributorAddress,
+            newContributor.share
+        );
     }
 
     //  removeContributor - onlyPushlisher
@@ -341,12 +341,11 @@ contract Book is
                 break;
             }
         }
-        // TODO: emit event
-        emit ContributorRemoved();
+        emit ContributorRemoved(contributor);
     }
 
     //  updateShares - onlyPushlisher
-    function updateContributorShares(address contributor, uint8 share)
+    function updateContributorShares(address contributor, uint96 share)
         external
         nonReentrant
     {
@@ -357,8 +356,7 @@ contract Book is
                 break;
             }
         }
-        // TODO: emit event
-        emit ContributorUpdated();
+        emit ContributorUpdated(contributor, share);
     }
 
     function withdrawRevenue() external payable nonReentrant {
@@ -374,8 +372,7 @@ contract Book is
                 revenuePerUnitShare.mul(_contributors[i].share)
             );
         }
-        // TODO: emit event
-        emit RevenueWithdrawn();
+        emit RevenueWithdrawn(_withdrawableRevenue);
     }
 
     function verifyOwnership(
@@ -394,8 +391,7 @@ contract Book is
         _onlyOwner(msg.sender, copyUid);
         _bookUnlocked(copyUid);
         _pricedCopiesRecord[copyUid].lockedWith = to;
-        // TODO: emit event
-        emit BookLocked();
+        emit BookLocked(copyUid, to);
     }
 
     function unlock(uint256 copyUid) external nonReentrant {
@@ -404,8 +400,7 @@ contract Book is
             "Un-authorized Request"
         );
         _pricedCopiesRecord[copyUid].lockedWith = address(0);
-        // TODO: emit event
-        emit BookUnlocked();
+        emit BookUnlocked(copyUid);
     }
 
     function verifyLockedWith(address to, uint256 copyUid)
