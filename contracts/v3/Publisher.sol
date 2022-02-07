@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.4;
 
-import "./contracts-upgradeable/utils/CountersUpgradeable.sol";
-
+import "./contracts/Counters.sol";
 import "./Book.sol";
 
 contract Publisher {
-    using CountersUpgradeable for CountersUpgradeable.Counter;
+    using Counters for Counters.Counter;
 
     // Storage Variables -----------------------------------------
-    CountersUpgradeable.Counter private _bookID;
+    Counters.Counter private _bookId;
     mapping(uint256 => address) private publishedBooks;
 
     event BookPublished(
@@ -21,11 +20,12 @@ contract Publisher {
         uint256 edition,
         address indexed prequel,
         bool supplyLimited,
-        uint256 pricedBookSupplyLimit
+        uint256 pricedBookSupplyLimit,
+        address indexed bookAddress
     );
 
     constructor() {
-        _bookID.increment();
+        _bookId.increment();
     }
 
     // Public Functions -----------------------------------------
@@ -41,7 +41,7 @@ contract Publisher {
         uint256 pricedBookSupplyLimit
     ) external {
         Book newBook = new Book();
-        uint256 bookId = _bookID.current();
+        uint256 bookId = _bookId.current();
         newBook.initialize(
             bookId,
             uri,
@@ -51,7 +51,7 @@ contract Publisher {
             pricedBookSupplyLimit,
             supplyLimited
         );
-        publishedBooks[_bookID.current()] = address(newBook);
+        publishedBooks[_bookId.current()] = address(newBook);
         emit BookPublished(
             bookId,
             metadataUri,
@@ -61,9 +61,10 @@ contract Publisher {
             edition,
             prequel,
             supplyLimited,
-            pricedBookSupplyLimit
+            pricedBookSupplyLimit,
+            address(newBook)
         );
-        _bookID.increment();
+        _bookId.increment();
     }
 
     function getBookAddress(uint256 bookId) external view returns (address) {

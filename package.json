@@ -1,11 +1,17 @@
 {
   "name": "hardhat-project",
+  "scripts": {
+    "localhost": "npx hardhat run scripts/deploy.ts --network ganache",
+    "deploy-rentor": "npx hardhat run scripts/deploy_rentor.ts --network polytest",
+    "deploy-publisher": "npx hardhat run scripts/deploy_publisher.ts --network polytest",
+    "deploy-exchange": "npx hardhat run scripts/deploy_exchange.ts --network polytest"
+  },
   "devDependencies": {
     "@ethersproject/contracts": "^5.5.0",
     "@nomiclabs/hardhat-ethers": "^2.0.4",
     "@nomiclabs/hardhat-etherscan": "^2.1.8",
     "@nomiclabs/hardhat-waffle": "^2.0.2",
-    "@superfluid-finance/ethereum-contracts": "^1.0.0-rc.8",
+    "@superfluid-finance/ethereum-contracts": "^1.0.0-rc.11",
     "@typechain/ethers-v5": "^7.2.0",
     "@typechain/hardhat": "^2.3.1",
     "@types/chai": "^4.3.0",

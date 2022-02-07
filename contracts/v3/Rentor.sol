@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.4;
+pragma abicoder v2;
 
-import "./contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
-import "./contracts-upgradeable/utils/ArraysUpgradeable.sol";
-import "./contracts-upgradeable/utils/math/SignedSafeMath.sol";
+import "./contracts/ReentrancyGuard.sol";
+import "./contracts/SignedSafeMath.sol";
 import {ISuperfluid, ISuperToken, ISuperApp, ISuperAgreement, SuperAppDefinitions} from "@superfluid-finance/ethereum-contracts/contracts/interfaces/superfluid/ISuperfluid.sol";
 import {IConstantFlowAgreementV1} from "@superfluid-finance/ethereum-contracts/contracts/interfaces/agreements/IConstantFlowAgreementV1.sol";
 import {SuperAppBase} from "@superfluid-finance/ethereum-contracts/contracts/apps/SuperAppBase.sol";
-import "./contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "./contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "./Book.sol";
 
 /**
@@ -16,7 +14,7 @@ import "./Book.sol";
  * @author Raghav Goyal, Nonit Mittal
  * @dev
  */
-contract Rentor is ReentrancyGuardUpgradeable, SuperAppBase {
+contract Rentor is ReentrancyGuard, SuperAppBase {
     using SignedSafeMath for int96;
 
     // Structs -----------------------------------------
@@ -50,7 +48,6 @@ contract Rentor is ReentrancyGuardUpgradeable, SuperAppBase {
         IConstantFlowAgreementV1 cfa,
         ISuperToken acceptedToken
     ) {
-        __ReentrancyGuard_init();
         require(address(host) != address(0), "Zero Address Not Allowed");
         require(address(cfa) != address(0), "Zero Address Not Allowed");
         require(
@@ -65,6 +62,7 @@ contract Rentor is ReentrancyGuardUpgradeable, SuperAppBase {
             SuperAppDefinitions.BEFORE_AGREEMENT_CREATED_NOOP |
             SuperAppDefinitions.BEFORE_AGREEMENT_UPDATED_NOOP |
             SuperAppDefinitions.BEFORE_AGREEMENT_TERMINATED_NOOP;
+
         _host.registerApp(configWord);
     }
 
@@ -106,6 +104,28 @@ contract Rentor is ReentrancyGuardUpgradeable, SuperAppBase {
         require(_flowBalances[msgSender] > 0, "Flow Does Not Exists");
     }
 
+    function _updateFlowFromContractWithCtx(
+        address to,
+        int96 flowRate,
+        bytes memory _ctx
+    ) private returns (bytes memory newCtx) {
+        int96 existingFlowRate = _getFlowFromContract(to);
+        int96 newFlowRate = existingFlowRate.add(flowRate);
+        require(newFlowRate >= 0, "Insufficent Flow Balance");
+        (newCtx, ) = _host.callAgreementWithContext(
+            _cfa,
+            abi.encodeWithSelector(
+                _cfa.updateFlow.selector,
+                _acceptedToken,
+                to,
+                newFlowRate,
+                new bytes(0)
+            ),
+            "0x",
+            _ctx
+        );
+    }
+
     function _updateFlowFromContract(address to, int96 flowRate) private {
         int96 existingFlowRate = _getFlowFromContract(to);
         int96 newFlowRate = existingFlowRate.add(flowRate);
@@ -123,8 +143,11 @@ contract Rentor is ReentrancyGuardUpgradeable, SuperAppBase {
         );
     }
 
-    function _deleteFlowFromContract(address to) private {
-        _host.callAgreement(
+    function _deleteFlowFromContract(address to, bytes memory _ctx)
+        private
+        returns (bytes memory newCtx)
+    {
+        (newCtx, ) = _host.callAgreementWithContext(
             _cfa,
             abi.encodeWithSelector(
                 _cfa.deleteFlow.selector,
@@ -133,12 +156,17 @@ contract Rentor is ReentrancyGuardUpgradeable, SuperAppBase {
                 to,
                 new bytes(0) // placeholder
             ),
-            "0x"
+            "0x",
+            _ctx
         );
     }
 
-    function _createFlowFromAgreement(address to, int96 flowRate) private {
-        _host.callAgreement(
+    function _createFlowFromAgreement(
+        address to,
+        int96 flowRate,
+        bytes memory _ctx
+    ) private returns (bytes memory newCtx) {
+        (newCtx, ) = _host.callAgreementWithContext(
             _cfa,
             abi.encodeWithSelector(
                 _cfa.createFlow.selector,
@@ -147,7 +175,8 @@ contract Rentor is ReentrancyGuardUpgradeable, SuperAppBase {
                 flowRate,
                 new bytes(0) // placeholder
             ),
-            "0x"
+            "0x",
+            _ctx
         );
     }
 
@@ -349,8 +378,7 @@ contract Rentor is ReentrancyGuardUpgradeable, SuperAppBase {
             address(this)
         );
         _flowBalances[context.msgSender] = inFlowRate;
-        _createFlowFromAgreement(context.msgSender, inFlowRate);
-        newCtx = _ctx;
+        newCtx = _createFlowFromAgreement(context.msgSender, inFlowRate, _ctx);
     }
 
     function afterAgreementUpdated(
@@ -377,17 +405,21 @@ contract Rentor is ReentrancyGuardUpgradeable, SuperAppBase {
         if (
             inFlowRate >= _flowBalances[context.msgSender].sub(flowFromContract)
         ) {
-            _updateFlowFromContract(
+            newCtx = _updateFlowFromContractWithCtx(
                 context.msgSender,
-                inFlowRate.sub(_flowBalances[context.msgSender])
+                inFlowRate.sub(_flowBalances[context.msgSender]),
+                _ctx
             );
         } else {
-            _deleteFlowFromContract(context.msgSender);
+            newCtx = _deleteFlowFromContract(context.msgSender, _ctx);
             _returnAllBooks(context.msgSender);
-            _createFlowFromAgreement(context.msgSender, inFlowRate);
+            newCtx = _createFlowFromAgreement(
+                context.msgSender,
+                inFlowRate,
+                newCtx
+            );
         }
         _flowBalances[context.msgSender] = inFlowRate;
-        newCtx = _ctx;
     }
 
     function afterAgreementTerminated(
@@ -405,10 +437,9 @@ contract Rentor is ReentrancyGuardUpgradeable, SuperAppBase {
         returns (bytes memory newCtx)
     {
         ISuperfluid.Context memory context = _host.decodeCtx(_ctx);
-        _deleteFlowFromContract(context.msgSender);
+        newCtx = _deleteFlowFromContract(context.msgSender, _ctx);
         _returnAllBooks(context.msgSender);
         delete _flowBalances[context.msgSender];
-        newCtx = _ctx;
     }
 }
 // -----------------------------
