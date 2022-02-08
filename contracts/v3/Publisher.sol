@@ -13,6 +13,7 @@ contract Publisher {
 
     event BookPublished(
         uint256 bookId,
+        address indexed publisher,
         bytes32 metadataUri,
         bytes32 coverPageUri,
         uint256 price,
@@ -49,11 +50,13 @@ contract Publisher {
             price,
             royalty,
             pricedBookSupplyLimit,
-            supplyLimited
+            supplyLimited,
+            msg.sender
         );
         publishedBooks[_bookId.current()] = address(newBook);
         emit BookPublished(
             bookId,
+            msg.sender,
             metadataUri,
             coverPageUri,
             price,
