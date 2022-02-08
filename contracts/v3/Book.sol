@@ -47,7 +47,7 @@ contract Book is
 
     // Storage Variables -----------------------------------------
     CountersUpgradeable.Counter private _pricedBookUid;
-    CountersUpgradeable.Counter private _freeBookUid;
+    CountersUpgradeable.Counter private _distributedBookUid;
     uint256 public _bookId;
     bytes32 private _uri;
     bytes32 private _coverPageUri;
@@ -100,7 +100,8 @@ contract Book is
         uint256 price,
         uint256 royalty,
         uint256 pricedBookSupplyLimit,
-        bool supplyLimited
+        bool supplyLimited,
+        address publisher
     ) public initializer {
         __EIP712_init(SIGNING_DOMAIN, SIGNATURE_VERSION);
         __ReentrancyGuard_init();
@@ -112,11 +113,11 @@ contract Book is
         _royalty = royalty;
         _pricedBookSupplyLimit = pricedBookSupplyLimit;
         _supplyLimited = supplyLimited;
-        _publisher = msg.sender;
+        _publisher = publisher;
 
         // Counters incremented to 1
         _pricedBookUid.increment();
-        _freeBookUid.increment();
+        _distributedBookUid.increment();
     }
 
     // Private Functions ---------------------------------
@@ -303,13 +304,13 @@ contract Book is
         address signer = _verify(voucher);
         require(_publisher == signer, "Invalid Signature");
         require(voucher.receiver == msg.sender, "Invalid Request");
-        _distributionRecord[_freeBookUid.current()] = voucher.receiver;
-        _freeBookUid.increment();
+        _distributionRecord[_distributedBookUid.current()] = voucher.receiver;
+        _distributedBookUid.increment();
         _addRevenue(voucher.price);
         payable(msg.sender).transfer(msg.value.sub(voucher.price));
         //TODO: emit event
         emit BookRedeemed(
-            _freeBookUid.current(),
+            _distributedBookUid.current(),
             voucher.price,
             voucher.receiver
         );
@@ -322,9 +323,9 @@ contract Book is
     {
         _onlyPublisher(msg.sender);
         _contributors.push(newContributor);
-        _distributionRecord[_freeBookUid.current()] = newContributor
+        _distributionRecord[_distributedBookUid.current()] = newContributor
             .contributorAddress;
-        _freeBookUid.increment();
+        _distributedBookUid.increment();
         emit ContributorAdded(
             newContributor.contributorAddress,
             newContributor.share
