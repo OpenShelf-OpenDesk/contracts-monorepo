@@ -19,7 +19,7 @@ contract Publisher {
         uint256 price,
         uint256 royalty,
         uint256 edition,
-        address indexed prequel,
+        uint256 prequel,
         bool supplyLimited,
         uint256 pricedBookSupplyLimit,
         address indexed bookAddress
@@ -37,7 +37,7 @@ contract Publisher {
         uint256 price,
         uint256 royalty,
         uint256 edition,
-        address prequel,
+        uint256 prequel,
         bool supplyLimited,
         uint256 pricedBookSupplyLimit
     ) external {
