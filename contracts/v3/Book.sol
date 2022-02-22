@@ -6,7 +6,6 @@ import "./contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "./contracts-upgradeable/utils/CountersUpgradeable.sol";
 import "./contracts-upgradeable/utils/math/SafeMathUpgradeable.sol";
 import "./contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
-
 import "./contracts-upgradeable/utils/cryptography/draft-EIP712Upgradeable.sol";
 import "./contracts-upgradeable/utils/cryptography/LibSignature.sol";
 
@@ -30,7 +29,6 @@ contract Book is
         address owner;
         address previousOwner;
         address lockedWith;
-        uint256 sellingPrice;
     }
 
     struct Contributor {
@@ -49,8 +47,7 @@ contract Book is
     CountersUpgradeable.Counter private _pricedBookUid;
     CountersUpgradeable.Counter private _distributedBookUid;
     uint256 public _bookId;
-    bytes32 private _uri;
-    bytes32 private _coverPageUri;
+    string private _uri;
     uint256 private _price;
     uint256 private _royalty;
     uint256 private _totalRevenue;
@@ -70,12 +67,12 @@ contract Book is
     event BookBought(uint256 copyUid, address indexed buyer, uint256 price);
     event BookTransferred(uint256 copyUid, address indexed to);
     event PriceUpdated(uint256 newPrice);
-    event SellingPriceUpdated(uint256 copyUid, uint256 newSellingPrice);
+    // event SellingPriceUpdated(uint256 copyUid, uint256 newSellingPrice);
     event MarketSupplyIncreased(uint256 newPricedBookSupplyLimit);
     event SupplyUnlimited();
     event SupplyLimited();
     event RoyaltyUpdated(uint256 newRoyalty);
-    event CoverPageUpdated(bytes32 newCoverPageUri);
+    event CoverPageUpdated(string newCoverPageUri);
     event BookRedeemed(
         uint256 distributedCopyUid,
         uint256 price,
@@ -95,8 +92,7 @@ contract Book is
     // Initializer
     function initialize(
         uint256 bookId,
-        bytes32 bookUri,
-        bytes32 coverPageUri,
+        string memory bookUri,
         uint256 price,
         uint256 royalty,
         uint256 pricedBookSupplyLimit,
@@ -108,7 +104,6 @@ contract Book is
         __UUPSUpgradeable_init();
         _bookId = bookId;
         _uri = bookUri;
-        _coverPageUri = coverPageUri;
         _price = price;
         _royalty = royalty;
         _pricedBookSupplyLimit = pricedBookSupplyLimit;
@@ -154,7 +149,7 @@ contract Book is
                 "Supply Limit Reached"
             );
         }
-        Copy memory newCopy = Copy(msg.sender, _publisher, address(0), _price);
+        Copy memory newCopy = Copy(msg.sender, _publisher, address(0));
         _pricedCopiesRecord[_pricedBookUid.current()] = newCopy;
         _pricedBookUid.increment();
         _addRevenue(_price);
@@ -202,23 +197,23 @@ contract Book is
         emit BookTransferred(copyUid, to);
     }
 
-    // function updatePrice(uint256 newPrice, bytes32 metadataUri)
+    // function updatePrice(uint256 newPrice, string metadataUri)
     function updatePrice(uint256 newPrice) external nonReentrant {
         _onlyPublisher(msg.sender);
         _price = newPrice;
         emit PriceUpdated(newPrice);
     }
 
-    function updateSellingPrice(uint256 copyUid, uint256 newSellingPrice)
-        external
-        nonReentrant
-    {
-        _onlyOwner(msg.sender, copyUid);
-        _bookUnlocked(copyUid);
-        require(newSellingPrice >= _royalty, "Selling Price Less Than Royalty");
-        _pricedCopiesRecord[copyUid].sellingPrice = newSellingPrice;
-        emit SellingPriceUpdated(copyUid, newSellingPrice);
-    }
+    // function updateSellingPrice(uint256 copyUid, uint256 newSellingPrice)
+    //     external
+    //     nonReentrant
+    // {
+    //     _onlyOwner(msg.sender, copyUid);
+    //     _bookUnlocked(copyUid);
+    //     require(newSellingPrice >= _royalty, "Selling Price Less Than Royalty");
+    //     _pricedCopiesRecord[copyUid].sellingPrice = newSellingPrice;
+    //     emit SellingPriceUpdated(copyUid, newSellingPrice);
+    // }
 
     // function putOnSale(uint256 copyUid) external nonReentrant {
     //     _onlyOwner(msg.sender, copyUid);
@@ -247,7 +242,7 @@ contract Book is
         emit MarketSupplyIncreased(_pricedBookSupplyLimit);
     }
 
-    function unlimitSupply() external nonReentrant {
+    function delimitSupply() external nonReentrant {
         require(_supplyLimited, "Supply Already Unlimited");
         _supplyLimited = false;
         emit SupplyUnlimited();
@@ -261,7 +256,7 @@ contract Book is
     }
 
     //  updateRoyalty - onlyPushlisher
-    // function updateRoyalty(uint8 newRoyalty, bytes32 metadataUri)
+    // function updateRoyalty(uint8 newRoyalty, string metadataUri)
     function updateRoyalty(uint256 newRoyalty) external nonReentrant {
         _onlyPublisher(msg.sender);
         _royalty = newRoyalty;
@@ -269,15 +264,14 @@ contract Book is
     }
 
     //  updateCoverPageUri - onlyPushlisher
-    // function updateCoverPageUri(bytes32 newCoverPageUri, bytes32 metadataUri)
-    function updateCoverPageUri(bytes32 newCoverPageUri) external nonReentrant {
+    // function updateCoverPageUri(string newCoverPageUri, string metadataUri)
+    function updateCoverPageUri(string calldata newCoverPageUri) external nonReentrant {
         _onlyPublisher(msg.sender);
-        _coverPageUri = newCoverPageUri;
         emit CoverPageUpdated(newCoverPageUri);
     }
 
     //  uri - onlyOwner
-    function uri(uint256 copyUid) external view returns (bytes32) {
+    function uri(uint256 copyUid) external view returns (string memory) {
         require(
             (_pricedCopiesRecord[copyUid].lockedWith == address(0) &&
                 _pricedCopiesRecord[copyUid].owner == msg.sender) ||
@@ -317,7 +311,7 @@ contract Book is
     }
 
     //  addContributor - onlyPushlisher
-    function addConributor(Contributor calldata newContributor)
+    function addContributor(Contributor calldata newContributor)
         external
         nonReentrant
     {
@@ -333,7 +327,7 @@ contract Book is
     }
 
     //  removeContributor - onlyPushlisher
-    function removeConributor(address contributor) external nonReentrant {
+    function removeContributor(address contributor) external nonReentrant {
         _onlyPublisher(msg.sender);
         for (uint256 i = 0; i < _contributors.length; i++) {
             if (_contributors[i].contributorAddress == contributor) {
