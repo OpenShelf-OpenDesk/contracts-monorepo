@@ -263,7 +263,7 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
     }
 
     // takeOnRent
-    function takeOnrent(address bookAddress, uint256 copyUid)
+    function takeOnRent(address bookAddress, uint256 copyUid)
         external
         nonReentrant
     {
@@ -322,7 +322,7 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
     function uri(address bookAddress, uint256 copyUid)
         external
         nonReentrant
-        returns (bytes32)
+        returns (string memory)
     {
         _flowExists(msg.sender);
         RentRecord memory record = _rentedBooksRecord[bookAddress][copyUid];
