@@ -14,8 +14,8 @@ contract Publisher {
     event BookPublished(
         uint256 bookId,
         address indexed publisher,
-        bytes32 metadataUri,
-        bytes32 coverPageUri,
+        string metadataUri,
+        string coverPageUri,
         uint256 price,
         uint256 royalty,
         uint256 edition,
@@ -31,9 +31,9 @@ contract Publisher {
 
     // Public Functions -----------------------------------------
     function publish(
-        bytes32 uri,
-        bytes32 metadataUri,
-        bytes32 coverPageUri,
+        string memory uri,
+        string memory metadataUri,
+        string memory coverPageUri,
         uint256 price,
         uint256 royalty,
         uint256 edition,
@@ -46,7 +46,6 @@ contract Publisher {
         newBook.initialize(
             bookId,
             uri,
-            coverPageUri,
             price,
             royalty,
             pricedBookSupplyLimit,
