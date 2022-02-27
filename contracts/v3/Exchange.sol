@@ -6,7 +6,7 @@ import "./contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "./contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
 import "./contracts-upgradeable/utils/math/SafeMathUpgradeable.sol";
-import "./Book.sol";
+import "./Edition.sol";
 
 /**
  * @title Exchange
@@ -23,7 +23,8 @@ contract Exchange is
 
     // Mappings --------------------------------------------
     // - offers - {bookAddress --> {copyUid --> {buyerAddress --> OfferPrice}}}
-    mapping(address => mapping(uint256 => mapping(address => uint256))) _offers;
+    mapping(address => mapping(uint256 => mapping(address => uint256)))
+        private _offers;
 
     // Events -----------------------------------------
     event OfferMade();
@@ -46,7 +47,7 @@ contract Exchange is
     ) external payable nonReentrant {
         require(msg.value >= offerPrice, "Insufficient Funds");
         require(
-            !Book(bookAddress).verifyOwnership(msg.sender, copyUid, false),
+            !Edition(bookAddress).verifyOwnership(msg.sender, copyUid, false),
             "Invalid Request"
         );
         require(
@@ -66,7 +67,7 @@ contract Exchange is
         nonReentrant
     {
         require(
-            !Book(bookAddress).verifyOwnership(msg.sender, copyUid, false),
+            !Edition(bookAddress).verifyOwnership(msg.sender, copyUid, false),
             "Invalid Request"
         );
         uint256 offeredPrice = _offers[bookAddress][copyUid][msg.sender];
@@ -84,12 +85,15 @@ contract Exchange is
         uint256 copyUid,
         address buyer
     ) external payable nonReentrant {
-        Book book = Book(bookAddress);
+        Edition edition = Edition(bookAddress);
         require(
-            book.getPreviousOwner(copyUid) == msg.sender,
+            edition.getPreviousOwner(copyUid) == msg.sender,
             "Un-authorized Request"
         );
-        require(book.verifyOwnership(buyer, copyUid, false), "Invalid Request");
+        require(
+            edition.verifyOwnership(buyer, copyUid, false),
+            "Invalid Request"
+        );
         uint256 offeredPrice = _offers[bookAddress][copyUid][buyer];
         if (offeredPrice > 0) {
             delete _offers[bookAddress][copyUid][buyer];

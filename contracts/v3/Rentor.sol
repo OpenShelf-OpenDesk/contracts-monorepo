@@ -7,7 +7,7 @@ import "./contracts/SignedSafeMath.sol";
 import {ISuperfluid, ISuperToken, ISuperApp, ISuperAgreement, SuperAppDefinitions} from "@superfluid-finance/ethereum-contracts/contracts/interfaces/superfluid/ISuperfluid.sol";
 import {IConstantFlowAgreementV1} from "@superfluid-finance/ethereum-contracts/contracts/interfaces/agreements/IConstantFlowAgreementV1.sol";
 import {SuperAppBase} from "@superfluid-finance/ethereum-contracts/contracts/apps/SuperAppBase.sol";
-import "./Book.sol";
+import "./Edition.sol";
 
 /**
  * @title Exchange
@@ -19,8 +19,8 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
 
     // Structs -----------------------------------------
     struct RentRecord {
-        address rentor; // book owner
-        address rentee; // book rented to
+        address rentor; // edition owner
+        address rentee; // edition rented to
         int96 flowRate;
     }
 
@@ -204,7 +204,7 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
                     _renteeRecord[rentee][i].copyUid
                 ].flowRate.mul(-1)
             );
-            // set rentee of book to 0
+            // set rentee of edition to 0
             _rentedBooksRecord[_renteeRecord[rentee][i].bookAddress][
                 _renteeRecord[rentee][i].copyUid
             ].rentee = address(0);
@@ -222,13 +222,13 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         int96 flowRate
     ) external nonReentrant {
         _flowExists(msg.sender);
-        Book book = Book(bookAddress);
+        Edition edition = Edition(bookAddress);
         require(
-            book.verifyOwnership(msg.sender, copyUid, false),
+            edition.verifyOwnership(msg.sender, copyUid, false),
             "Un-authorized Request"
         );
         require(
-            book.verifyLockedWith(address(this), copyUid),
+            edition.verifyLockedWith(address(this), copyUid),
             "Invalid Request"
         );
         require(
@@ -256,8 +256,8 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
             "Permission Denied"
         );
         delete _rentedBooksRecord[bookAddress][copyUid];
-        Book book = Book(bookAddress);
-        book.unlock(copyUid);
+        Edition edition = Edition(bookAddress);
+        edition.unlock(copyUid);
         // TODO: emit event
         emit BookRemovedFromRent();
     }
@@ -328,8 +328,8 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         RentRecord memory record = _rentedBooksRecord[bookAddress][copyUid];
         require(record.rentor != address(0), "Not Available For Rent");
         require(record.rentee == msg.sender, "Un-authorized Request");
-        Book book = Book(bookAddress);
-        return book.uri(copyUid);
+        Edition edition = Edition(bookAddress);
+        return edition.uri(copyUid);
     }
 
     // addToWaitingList
