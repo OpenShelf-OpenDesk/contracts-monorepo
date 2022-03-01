@@ -27,9 +27,22 @@ contract Exchange is
         private _offers;
 
     // Events -----------------------------------------
-    event OfferMade();
-    event OfferCancelled();
-    event OfferAccepted();
+    event OfferMade(
+        address indexed bookAddress,
+        uint256 copyUid,
+        address indexed offerer,
+        uint256 offerPrice
+    );
+    event OfferCancelled(
+        address indexed bookAddress,
+        uint256 copyUid,
+        address indexed offerer
+    );
+    event OfferAccepted(
+        address indexed bookAddress,
+        uint256 copyUid,
+        address indexed offerer
+    );
 
     // Initializer -----------------------------------------
     function initialize() public initializer {
@@ -56,8 +69,7 @@ contract Exchange is
         );
         _offers[bookAddress][copyUid][msg.sender] = offerPrice;
         payable(msg.sender).transfer(msg.value.sub(offerPrice));
-        // TODO: emit event
-        emit OfferMade();
+        emit OfferMade(bookAddress, copyUid, msg.sender, offerPrice);
     }
 
     // cancelOffer
@@ -75,8 +87,7 @@ contract Exchange is
             delete _offers[bookAddress][copyUid][msg.sender];
             payable(msg.sender).transfer(offeredPrice);
         }
-        // TODO: emit event
-        emit OfferCancelled();
+        emit OfferCancelled(bookAddress, copyUid, msg.sender);
     }
 
     // offerAccepted
@@ -99,8 +110,7 @@ contract Exchange is
             delete _offers[bookAddress][copyUid][buyer];
             payable(msg.sender).transfer(offeredPrice);
         }
-        // TODO: emit event
-        emit OfferAccepted();
+        emit OfferAccepted(bookAddress, copyUid, buyer);
     }
 
     function _authorizeUpgrade(

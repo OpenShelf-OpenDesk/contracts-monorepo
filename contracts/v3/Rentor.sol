@@ -67,13 +67,23 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
     }
 
     // Events -----------------------------------------
-    event AllBooksReturned();
-    event BookPutOnRent();
-    event BookRemovedFromRent();
-    event BookTakenOnRent();
-    event BookReturned();
-    event AddedToWaitingList(address bookAddress, uint256 copyUid);
-    event RemovedFromWaitingList(address bookAddress, uint256 copyUid);
+    // event AllBooksReturned();
+    event BookPutOnRent(
+        address indexed editionAddress,
+        uint256 copyUid,
+        int96 flowRate
+    );
+    event BookRemovedFromRent(address indexed editionAddress, uint256 copyUid);
+    event BookTakenOnRent(
+        address indexed editionAddress,
+        uint256 copyUid,
+        address indexed rentedTo,
+        int96 flowRate
+    );
+
+    event BookReturned(address indexed editionAddress, uint256 copyUid);
+    // event AddedToWaitingList(address bookAddress, uint256 copyUid);
+    // event RemovedFromWaitingList(address bookAddress, uint256 copyUid);
 
     // Modifiers -----------------------------------------
     modifier onlyHost() {
@@ -196,22 +206,21 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
     function _returnAllBooks(address rentee) private {
         for (uint256 i = 0; i < _renteeRecord[rentee].length; i++) {
             // update flow from contract to the owner
+            RenteeRecord memory renteeRecord = _renteeRecord[rentee][i];
             _updateFlowFromContract(
-                _rentedBooksRecord[_renteeRecord[rentee][i].bookAddress][
-                    _renteeRecord[rentee][i].copyUid
+                _rentedBooksRecord[renteeRecord.bookAddress][
+                    renteeRecord.copyUid
                 ].rentor,
-                _rentedBooksRecord[_renteeRecord[rentee][i].bookAddress][
-                    _renteeRecord[rentee][i].copyUid
+                _rentedBooksRecord[renteeRecord.bookAddress][
+                    renteeRecord.copyUid
                 ].flowRate.mul(-1)
             );
             // set rentee of edition to 0
-            _rentedBooksRecord[_renteeRecord[rentee][i].bookAddress][
-                _renteeRecord[rentee][i].copyUid
-            ].rentee = address(0);
+            _rentedBooksRecord[renteeRecord.bookAddress][renteeRecord.copyUid]
+                .rentee = address(0);
+            emit BookReturned(renteeRecord.bookAddress, renteeRecord.copyUid);
         }
         delete _renteeRecord[rentee];
-        // TODO: emit event
-        emit AllBooksReturned();
     }
 
     // External Functions ------------------------------------------------
@@ -237,8 +246,7 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         );
         _rentedBooksRecord[bookAddress][copyUid].rentor = msg.sender;
         _rentedBooksRecord[bookAddress][copyUid].flowRate = flowRate;
-        // TODO: emit event
-        emit BookPutOnRent();
+        emit BookPutOnRent(bookAddress, copyUid, flowRate);
     }
 
     // removeFromRent
@@ -258,8 +266,7 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         delete _rentedBooksRecord[bookAddress][copyUid];
         Edition edition = Edition(bookAddress);
         edition.unlock(copyUid);
-        // TODO: emit event
-        emit BookRemovedFromRent();
+        emit BookRemovedFromRent(bookAddress, copyUid);
     }
 
     // takeOnRent
@@ -279,8 +286,7 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         _renteeRecord[msg.sender].push(RenteeRecord(bookAddress, copyUid));
         _updateFlowFromContract(msg.sender, record.flowRate.mul(-1));
         _updateFlowFromContract(record.rentor, record.flowRate);
-        // TODO: emit event
-        emit BookTakenOnRent();
+        emit BookTakenOnRent(bookAddress, copyUid, msg.sender, record.flowRate);
     }
 
     // returnOnRent
@@ -314,8 +320,7 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
             }
         }
         _updateFlowFromContract(msg.sender, record.flowRate);
-        // TODO: emit event
-        emit BookReturned();
+        emit BookReturned(bookAddress, copyUid);
     }
 
     // requestBookUri
@@ -333,24 +338,24 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
     }
 
     // addToWaitingList
-    function addToWaitingList(address bookAddress, uint256 copyUid)
-        external
-        nonReentrant
-    {
-        _flowExists(msg.sender);
-        // TODO: emit event
-        emit AddedToWaitingList(bookAddress, copyUid);
-    }
+    // function addToWaitingList(address bookAddress, uint256 copyUid)
+    //     external
+    //     nonReentrant
+    // {
+    //     _flowExists(msg.sender);
+    //     // TODO: emit event
+    //     emit AddedToWaitingList(bookAddress, copyUid);
+    // }
 
     // removeFromWaitingList
-    function removeFromWaitingList(address bookAddress, uint256 copyUid)
-        external
-        nonReentrant
-    {
-        _flowExists(msg.sender);
-        // TODO: emit event
-        emit RemovedFromWaitingList(bookAddress, copyUid);
-    }
+    // function removeFromWaitingList(address bookAddress, uint256 copyUid)
+    //     external
+    //     nonReentrant
+    // {
+    //     _flowExists(msg.sender);
+    //     // TODO: emit event
+    //     emit RemovedFromWaitingList(bookAddress, copyUid);
+    // }
 
     // function _authorizeUpgrade(
     //     address /*newImplementation*/
