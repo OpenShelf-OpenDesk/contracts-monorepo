@@ -36,6 +36,12 @@ contract Edition is
         uint96 share;
     }
 
+    struct ContributorCalldata {
+        address contributorAddress;
+        uint96 share;
+        string role;
+    }
+
     struct BookVoucher {
         uint256 bookID;
         address receiver;
@@ -82,7 +88,6 @@ contract Edition is
         string role,
         uint256 distributedCopyUid
     );
-    // event ContributorsAdded(Contributor[] contributors, string role);
     event RevenueWithdrawn(uint256 withdrawableRevenue);
     event BookLocked(uint256 copyUid, address indexed to);
     event BookUnlocked(uint256 copyUid);
@@ -222,24 +227,27 @@ contract Edition is
     }
 
     //  addContributor - onlyPushlisher
-    function addContributors(
-        Contributor[] calldata contributors,
-        string calldata role
-    ) external nonReentrant {
+    function addContributors(ContributorCalldata[] calldata contributors)
+        external
+        nonReentrant
+    {
         _onlyPublisher(msg.sender);
         for (uint256 i = 0; i < contributors.length; i++) {
-            _contributors.push(contributors[i]);
+            Contributor memory newContributor = Contributor(
+                contributors[i].contributorAddress,
+                contributors[i].share
+            );
+            _contributors.push(newContributor);
             _distributionRecord[_distributedBookUid.current()] = contributors[i]
                 .contributorAddress;
             emit ContributorAdded(
                 contributors[i].contributorAddress,
                 contributors[i].share,
-                role,
+                contributors[i].role,
                 _distributedBookUid.current()
             );
             _distributedBookUid.increment();
         }
-        // emit ContributorsAdded(contributors, role);
     }
 
     //  uri - onlyOwner
