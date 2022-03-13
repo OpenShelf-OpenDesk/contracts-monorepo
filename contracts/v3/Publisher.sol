@@ -137,6 +137,7 @@ contract Publisher {
         uint256 seriesId = _seriesId.current();
         _seriesCreators[seriesId] = msg.sender;
         emit NewSeriesCreated(seriesId, seriesMetadataUri, msg.sender);
+        _seriesId.increment();
     }
 
     function addBookToSeries(uint256 seriesId, uint256 bookId) external {

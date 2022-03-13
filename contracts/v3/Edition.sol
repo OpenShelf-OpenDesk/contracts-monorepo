@@ -163,10 +163,10 @@ contract Edition is
         }
         Copy memory newCopy = Copy(msg.sender, _publisher, address(0));
         _pricedCopiesRecord[_pricedBookUid.current()] = newCopy;
-        _pricedBookUid.increment();
         _addRevenue(_price);
         payable(msg.sender).transfer(msg.value.sub(_price));
         emit BookBought(_pricedBookUid.current(), msg.sender, _price);
+        _pricedBookUid.increment();
     }
 
     function transfer(address to, uint256 copyUid)
@@ -279,7 +279,6 @@ contract Edition is
         require(_publisher == signer, "Invalid Signature");
         require(voucher.receiver == msg.sender, "Invalid Request");
         _distributionRecord[_distributedBookUid.current()] = voucher.receiver;
-        _distributedBookUid.increment();
         _addRevenue(voucher.price);
         payable(msg.sender).transfer(msg.value.sub(voucher.price));
         emit BookRedeemed(
@@ -287,6 +286,7 @@ contract Edition is
             voucher.price,
             voucher.receiver
         );
+        _distributedBookUid.increment();
     }
 
     function withdrawRevenue() external payable nonReentrant {
