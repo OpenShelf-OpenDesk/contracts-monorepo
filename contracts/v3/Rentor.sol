@@ -241,7 +241,7 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
             "Invalid Request"
         );
         require(
-            _rentedBooksRecord[bookAddress][copyUid].rentor != address(0),
+            _rentedBooksRecord[bookAddress][copyUid].rentor == address(0),
             "Already On Rent"
         );
         _rentedBooksRecord[bookAddress][copyUid].rentor = msg.sender;
