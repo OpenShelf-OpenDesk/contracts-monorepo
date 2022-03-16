@@ -24,19 +24,14 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         int96 flowRate;
     }
 
-    struct RenteeRecord {
-        address bookAddress;
-        uint256 copyUid;
-    }
-
     // Mappings ------------------------------------------
     // - flowBalance {address --> int96 flowRate}
     mapping(address => int96) private _flowBalances;
     // -_rentedBooksRecord {bookAddress --> {copyUid --> Pair{rentee, rentor, flowrate}}}
     mapping(address => mapping(uint256 => RentRecord))
         private _rentedBooksRecord;
-    // - {readerAddress --> [Record{bookAddress, copyUid}]}
-    mapping(address => RenteeRecord[]) private _renteeRecord;
+    // user address --> number (if zero then, it means no books taken or given on rent)
+    mapping(address => int256) private _activityRecord;
 
     // Superfluid -----------------------------------------
     ISuperfluid private _host;
@@ -59,9 +54,7 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         _acceptedToken = acceptedToken;
 
         uint256 configWord = SuperAppDefinitions.APP_LEVEL_FINAL |
-            SuperAppDefinitions.BEFORE_AGREEMENT_CREATED_NOOP |
-            SuperAppDefinitions.BEFORE_AGREEMENT_UPDATED_NOOP |
-            SuperAppDefinitions.BEFORE_AGREEMENT_TERMINATED_NOOP;
+            SuperAppDefinitions.BEFORE_AGREEMENT_CREATED_NOOP;
 
         _host.registerApp(configWord);
     }
@@ -203,26 +196,6 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         return outFlowRate;
     }
 
-    function _returnAllBooks(address rentee) private {
-        for (uint256 i = 0; i < _renteeRecord[rentee].length; i++) {
-            // update flow from contract to the owner
-            RenteeRecord memory renteeRecord = _renteeRecord[rentee][i];
-            _updateFlowFromContract(
-                _rentedBooksRecord[renteeRecord.bookAddress][
-                    renteeRecord.copyUid
-                ].rentor,
-                _rentedBooksRecord[renteeRecord.bookAddress][
-                    renteeRecord.copyUid
-                ].flowRate.mul(-1)
-            );
-            // set rentee of edition to 0
-            _rentedBooksRecord[renteeRecord.bookAddress][renteeRecord.copyUid]
-                .rentee = address(0);
-            emit BookReturned(renteeRecord.bookAddress, renteeRecord.copyUid);
-        }
-        delete _renteeRecord[rentee];
-    }
-
     // External Functions ------------------------------------------------
     // putOnRent
     function putOnRent(
@@ -246,6 +219,7 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         );
         _rentedBooksRecord[bookAddress][copyUid].rentor = msg.sender;
         _rentedBooksRecord[bookAddress][copyUid].flowRate = flowRate;
+        _activityRecord[msg.sender] = _activityRecord[msg.sender] + 1;
         emit BookPutOnRent(bookAddress, copyUid, flowRate);
     }
 
@@ -266,6 +240,7 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         delete _rentedBooksRecord[bookAddress][copyUid];
         Edition edition = Edition(bookAddress);
         edition.unlock(copyUid);
+        _activityRecord[msg.sender] = _activityRecord[msg.sender] - 1;
         emit BookRemovedFromRent(bookAddress, copyUid);
     }
 
@@ -283,9 +258,9 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
             "Insufficient Flow Balance"
         );
         _rentedBooksRecord[bookAddress][copyUid].rentee = msg.sender;
-        _renteeRecord[msg.sender].push(RenteeRecord(bookAddress, copyUid));
         _updateFlowFromContract(msg.sender, record.flowRate.mul(-1));
         _updateFlowFromContract(record.rentor, record.flowRate);
+        _activityRecord[msg.sender] = _activityRecord[msg.sender] + 1;
         emit BookTakenOnRent(bookAddress, copyUid, msg.sender, record.flowRate);
     }
 
@@ -299,27 +274,8 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         require(record.rentee == msg.sender, "Un-authorized Request");
         _updateFlowFromContract(record.rentor, record.flowRate.mul(-1));
         _rentedBooksRecord[bookAddress][copyUid].rentee = address(0);
-        for (uint256 i = 0; i < _renteeRecord[msg.sender].length; i++) {
-            if (
-                _renteeRecord[msg.sender][i].bookAddress == bookAddress &&
-                _renteeRecord[msg.sender][i].copyUid == copyUid
-            ) {
-                for (
-                    uint256 j = i;
-                    j < _renteeRecord[msg.sender].length - 1;
-                    j++
-                ) {
-                    _renteeRecord[msg.sender][j] = _renteeRecord[msg.sender][
-                        j + 1
-                    ];
-                }
-                delete _renteeRecord[msg.sender][
-                    _renteeRecord[msg.sender].length - 1
-                ];
-                break;
-            }
-        }
         _updateFlowFromContract(msg.sender, record.flowRate);
+        _activityRecord[msg.sender] = _activityRecord[msg.sender] - 1;
         emit BookReturned(bookAddress, copyUid);
     }
 
@@ -386,6 +342,28 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         newCtx = _createFlowFromAgreement(context.msgSender, inFlowRate, _ctx);
     }
 
+    function beforeAgreementUpdated(
+        ISuperToken _superToken,
+        address _agreementClass,
+        bytes32, // _agreementId,
+        bytes calldata, /*_agreementData*/
+        bytes calldata _ctx
+    )
+        external
+        view
+        virtual
+        override
+        onlyExpected(_superToken, _agreementClass)
+        onlyHost
+        returns (bytes memory)
+    {
+        ISuperfluid.Context memory context = _host.decodeCtx(_ctx);
+        if (_activityRecord[context.msgSender] != 0) {
+            revert("Uncleared Records!");
+        }
+        return _ctx;
+    }
+
     function afterAgreementUpdated(
         ISuperToken _superToken,
         address _agreementClass,
@@ -398,7 +376,7 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         override
         onlyExpected(_superToken, _agreementClass)
         onlyHost
-        returns (bytes memory newCtx)
+        returns (bytes memory)
     {
         ISuperfluid.Context memory context = _host.decodeCtx(_ctx);
         (, int96 inFlowRate, , ) = _cfa.getFlow(
@@ -406,25 +384,34 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
             context.msgSender,
             address(this)
         );
-        int96 flowFromContract = _getFlowFromContract(context.msgSender);
-        if (
-            inFlowRate >= _flowBalances[context.msgSender].sub(flowFromContract)
-        ) {
-            newCtx = _updateFlowFromContractWithCtx(
-                context.msgSender,
-                inFlowRate.sub(_flowBalances[context.msgSender]),
-                _ctx
-            );
-        } else {
-            newCtx = _deleteFlowFromContract(context.msgSender, _ctx);
-            _returnAllBooks(context.msgSender);
-            newCtx = _createFlowFromAgreement(
-                context.msgSender,
-                inFlowRate,
-                newCtx
-            );
-        }
+        _updateFlowFromContract(
+            context.msgSender,
+            inFlowRate - _flowBalances[context.msgSender]
+        );
         _flowBalances[context.msgSender] = inFlowRate;
+        return _ctx;
+    }
+
+    function beforeAgreementTerminated(
+        ISuperToken _superToken,
+        address _agreementClass,
+        bytes32, // _agreementId,
+        bytes calldata, /*_agreementData*/
+        bytes calldata _ctx
+    )
+        external
+        view
+        virtual
+        override
+        onlyExpected(_superToken, _agreementClass)
+        onlyHost
+        returns (bytes memory)
+    {
+        ISuperfluid.Context memory context = _host.decodeCtx(_ctx);
+        if (_activityRecord[context.msgSender] != 0) {
+            revert("Uncleared Records!");
+        }
+        return _ctx;
     }
 
     function afterAgreementTerminated(
@@ -443,7 +430,6 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
     {
         ISuperfluid.Context memory context = _host.decodeCtx(_ctx);
         newCtx = _deleteFlowFromContract(context.msgSender, _ctx);
-        _returnAllBooks(context.msgSender);
         delete _flowBalances[context.msgSender];
     }
 }
