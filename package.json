@@ -5,7 +5,8 @@
         "deploy-rentor": "npx hardhat run scripts/deploy_rentor.ts --network polytest",
         "deploy-publisher": "npx hardhat run scripts/deploy_publisher.ts --network polytest",
         "deploy-exchange": "npx hardhat run scripts/deploy_exchange.ts --network polytest",
-        "deploy-profile": "npx hardhat run scripts/deploy_profile.ts --network polytest"
+        "deploy-profile": "npx hardhat run scripts/deploy_profile.ts --network polytest",
+        "deploy-all": "npx hardhat run scripts/deploy_profile.ts --network polytest && npx hardhat run scripts/deploy_publisher.ts --network polytest && npx hardhat run scripts/deploy_exchange.ts --network polytest && npx hardhat run scripts/deploy_rentor.ts --network polytest"
     },
     "devDependencies": {
         "@ethersproject/contracts": "^5.5.0",
