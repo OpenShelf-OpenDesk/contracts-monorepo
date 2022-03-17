@@ -31,7 +31,7 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
     mapping(address => mapping(uint256 => RentRecord))
         private _rentedBooksRecord;
     // user address --> number (if zero then, it means no books taken or given on rent)
-    mapping(address => int256) private _activityRecord;
+    mapping(address => uint256) private _activityRecord;
 
     // Superfluid -----------------------------------------
     ISuperfluid private _host;
@@ -342,27 +342,27 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         newCtx = _createFlowFromAgreement(context.msgSender, inFlowRate, _ctx);
     }
 
-    function beforeAgreementUpdated(
-        ISuperToken _superToken,
-        address _agreementClass,
-        bytes32, // _agreementId,
-        bytes calldata, /*_agreementData*/
-        bytes calldata _ctx
-    )
-        external
-        view
-        virtual
-        override
-        onlyExpected(_superToken, _agreementClass)
-        onlyHost
-        returns (bytes memory)
-    {
-        ISuperfluid.Context memory context = _host.decodeCtx(_ctx);
-        if (_activityRecord[context.msgSender] != 0) {
-            revert("Uncleared Records!");
-        }
-        return _ctx;
-    }
+    // function beforeAgreementUpdated(
+    //     ISuperToken _superToken,
+    //     address _agreementClass,
+    //     bytes32, // _agreementId,
+    //     bytes calldata, /*_agreementData*/
+    //     bytes calldata _ctx
+    // )
+    //     external
+    //     view
+    //     virtual
+    //     override
+    //     onlyExpected(_superToken, _agreementClass)
+    //     onlyHost
+    //     returns (bytes memory)
+    // {
+    //     ISuperfluid.Context memory context = _host.decodeCtx(_ctx);
+    //     if (_activityRecord[context.msgSender] != 0) {
+    //         revert("Uncleared Records!");
+    //     }
+    //     return _ctx;
+    // }
 
     function afterAgreementUpdated(
         ISuperToken _superToken,
@@ -376,50 +376,53 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         override
         onlyExpected(_superToken, _agreementClass)
         onlyHost
-        returns (bytes memory)
-    {
-        ISuperfluid.Context memory context = _host.decodeCtx(_ctx);
-        (, int96 inFlowRate, , ) = _cfa.getFlow(
-            _acceptedToken,
-            context.msgSender,
-            address(this)
-        );
-        _updateFlowFromContract(
-            context.msgSender,
-            inFlowRate - _flowBalances[context.msgSender]
-        );
-        _flowBalances[context.msgSender] = inFlowRate;
-        return _ctx;
-    }
-
-    function beforeAgreementTerminated(
-        ISuperToken _superToken,
-        address _agreementClass,
-        bytes32, // _agreementId,
-        bytes calldata, /*_agreementData*/
-        bytes calldata _ctx
-    )
-        external
-        view
-        virtual
-        override
-        onlyExpected(_superToken, _agreementClass)
-        onlyHost
-        returns (bytes memory)
+        returns (bytes memory _newCtx)
     {
         ISuperfluid.Context memory context = _host.decodeCtx(_ctx);
         if (_activityRecord[context.msgSender] != 0) {
             revert("Uncleared Records!");
         }
-        return _ctx;
+        (, int96 inFlowRate, , ) = _cfa.getFlow(
+            _acceptedToken,
+            context.msgSender,
+            address(this)
+        );
+        _newCtx = _updateFlowFromContractWithCtx(
+            context.msgSender,
+            inFlowRate - _flowBalances[context.msgSender],
+            _ctx
+        );
+        _flowBalances[context.msgSender] = inFlowRate;
     }
+
+    // function beforeAgreementTerminated(
+    //     ISuperToken _superToken,
+    //     address _agreementClass,
+    //     bytes32, // _agreementId,
+    //     bytes calldata, /*_agreementData*/
+    //     bytes calldata _ctx
+    // )
+    //     external
+    //     view
+    //     virtual
+    //     override
+    //     onlyExpected(_superToken, _agreementClass)
+    //     onlyHost
+    //     returns (bytes memory)
+    // {
+    //     ISuperfluid.Context memory context = _host.decodeCtx(_ctx);
+    //     if (_activityRecord[context.msgSender] != 0) {
+    //         revert("Uncleared Records!");
+    //     }
+    //     return _ctx;
+    // }
 
     function afterAgreementTerminated(
         ISuperToken _superToken,
         address _agreementClass,
         bytes32, // _agreementId,
         bytes calldata, /*_agreementData*/
-        bytes calldata, // _cbdata,
+        bytes calldata, /*_cbdata*/
         bytes calldata _ctx
     )
         external
@@ -429,6 +432,9 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         returns (bytes memory newCtx)
     {
         ISuperfluid.Context memory context = _host.decodeCtx(_ctx);
+        if (_activityRecord[context.msgSender] != 0) {
+            revert("Uncleared Records!");
+        }
         newCtx = _deleteFlowFromContract(context.msgSender, _ctx);
         delete _flowBalances[context.msgSender];
     }
