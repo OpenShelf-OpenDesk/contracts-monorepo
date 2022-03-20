@@ -108,12 +108,10 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
 
     function _updateFlowFromContractWithCtx(
         address to,
-        int96 flowRate,
+        int96 newFlowRate,
         bytes memory _ctx
     ) private returns (bytes memory newCtx) {
-        int96 existingFlowRate = _getFlowFromContract(to);
-        int96 newFlowRate = existingFlowRate.add(flowRate);
-        require(newFlowRate >= 0, "Insufficent Flow Balance");
+        newCtx = _ctx;
         (newCtx, ) = _host.callAgreementWithContext(
             _cfa,
             abi.encodeWithSelector(
@@ -149,6 +147,7 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         private
         returns (bytes memory newCtx)
     {
+        newCtx = _ctx;
         (newCtx, ) = _host.callAgreementWithContext(
             _cfa,
             abi.encodeWithSelector(
@@ -168,6 +167,7 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         int96 flowRate,
         bytes memory _ctx
     ) private returns (bytes memory newCtx) {
+        newCtx = _ctx;
         (newCtx, ) = _host.callAgreementWithContext(
             _cfa,
             abi.encodeWithSelector(
@@ -388,7 +388,7 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         );
         _newCtx = _updateFlowFromContractWithCtx(
             context.msgSender,
-            inFlowRate - _flowBalances[context.msgSender],
+            inFlowRate,
             _ctx
         );
         _flowBalances[context.msgSender] = inFlowRate;
