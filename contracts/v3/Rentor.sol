@@ -73,7 +73,6 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         address indexed rentedTo,
         int96 flowRate
     );
-
     event BookReturned(address indexed editionAddress, uint256 copyUid);
     // event AddedToWaitingList(address bookAddress, uint256 copyUid);
     // event RemovedFromWaitingList(address bookAddress, uint256 copyUid);
@@ -379,9 +378,9 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         returns (bytes memory _newCtx)
     {
         ISuperfluid.Context memory context = _host.decodeCtx(_ctx);
-        if (_activityRecord[context.msgSender] != 0) {
-            revert("Uncleared Records!");
-        }
+        // if (_activityRecord[context.msgSender] != 0) {
+        //     revert("Uncleared Records!");
+        // }
         (, int96 inFlowRate, , ) = _cfa.getFlow(
             _acceptedToken,
             context.msgSender,
@@ -432,9 +431,9 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         returns (bytes memory newCtx)
     {
         ISuperfluid.Context memory context = _host.decodeCtx(_ctx);
-        if (_activityRecord[context.msgSender] != 0) {
-            revert("Uncleared Records!");
-        }
+        // if (_activityRecord[context.msgSender] != 0) {
+        //     revert("Uncleared Records!");
+        // }
         newCtx = _deleteFlowFromContract(context.msgSender, _ctx);
         delete _flowBalances[context.msgSender];
     }
