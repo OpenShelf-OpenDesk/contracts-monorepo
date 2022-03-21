@@ -31,7 +31,7 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
     mapping(address => mapping(uint256 => RentRecord))
         private _rentedBooksRecord;
     // user address --> number (if zero then, it means no books taken or given on rent)
-    mapping(address => uint256) private _activityRecord;
+    // mapping(address => uint256) private _activityRecord;
 
     // Superfluid -----------------------------------------
     ISuperfluid private _host;
@@ -54,7 +54,9 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         _acceptedToken = acceptedToken;
 
         uint256 configWord = SuperAppDefinitions.APP_LEVEL_FINAL |
-            SuperAppDefinitions.BEFORE_AGREEMENT_CREATED_NOOP;
+            SuperAppDefinitions.BEFORE_AGREEMENT_CREATED_NOOP |
+            SuperAppDefinitions.BEFORE_AGREEMENT_UPDATED_NOOP |
+            SuperAppDefinitions.BEFORE_AGREEMENT_TERMINATED_NOOP;
 
         _host.registerApp(configWord);
     }
@@ -218,7 +220,7 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         );
         _rentedBooksRecord[bookAddress][copyUid].rentor = msg.sender;
         _rentedBooksRecord[bookAddress][copyUid].flowRate = flowRate;
-        _activityRecord[msg.sender] = _activityRecord[msg.sender] + 1;
+        // _activityRecord[msg.sender] = _activityRecord[msg.sender] + 1;
         emit BookPutOnRent(bookAddress, copyUid, flowRate);
     }
 
@@ -239,7 +241,7 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         delete _rentedBooksRecord[bookAddress][copyUid];
         Edition edition = Edition(bookAddress);
         edition.unlock(copyUid);
-        _activityRecord[msg.sender] = _activityRecord[msg.sender] - 1;
+        // _activityRecord[msg.sender] = _activityRecord[msg.sender] - 1;
         emit BookRemovedFromRent(bookAddress, copyUid);
     }
 
@@ -259,7 +261,7 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         _rentedBooksRecord[bookAddress][copyUid].rentee = msg.sender;
         _updateFlowFromContract(msg.sender, record.flowRate.mul(-1));
         _updateFlowFromContract(record.rentor, record.flowRate);
-        _activityRecord[msg.sender] = _activityRecord[msg.sender] + 1;
+        // _activityRecord[msg.sender] = _activityRecord[msg.sender] + 1;
         emit BookTakenOnRent(bookAddress, copyUid, msg.sender, record.flowRate);
     }
 
@@ -274,7 +276,7 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         _updateFlowFromContract(record.rentor, record.flowRate.mul(-1));
         _rentedBooksRecord[bookAddress][copyUid].rentee = address(0);
         _updateFlowFromContract(msg.sender, record.flowRate);
-        _activityRecord[msg.sender] = _activityRecord[msg.sender] - 1;
+        // _activityRecord[msg.sender] = _activityRecord[msg.sender] - 1;
         emit BookReturned(bookAddress, copyUid);
     }
 
@@ -375,7 +377,7 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
         override
         onlyExpected(_superToken, _agreementClass)
         onlyHost
-        returns (bytes memory _newCtx)
+        returns (bytes memory newCtx)
     {
         ISuperfluid.Context memory context = _host.decodeCtx(_ctx);
         // if (_activityRecord[context.msgSender] != 0) {
@@ -386,7 +388,7 @@ contract Rentor is ReentrancyGuard, SuperAppBase {
             context.msgSender,
             address(this)
         );
-        _newCtx = _updateFlowFromContractWithCtx(
+        newCtx = _updateFlowFromContractWithCtx(
             context.msgSender,
             inFlowRate,
             _ctx
